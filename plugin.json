@@ -1,0 +1,17 @@
+{
+    "id": "dcalAgenda",
+    "name": "Agenda",
+    "description": "Desktop widget with upcoming events and Google Tasks-style task lists from DankCalendar (dcal): add, complete and reopen tasks, filter calendars, sync on demand",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "ilyamen",
+    "icon": "event_note",
+    "type": "desktop",
+    "capabilities": ["desktop-widget"],
+    "component": "./Agenda.qml",
+    "settings": "./AgendaSettings.qml",
+    "startupCheck": "./StartupCheck.qml",
+    "requires_dms": ">=1.6.0",
+    "dependencies": ["dcal"],
+    "permissions": ["settings_read", "settings_write", "process"]
+}
