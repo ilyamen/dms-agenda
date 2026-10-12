@@ -6,7 +6,7 @@ A [DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell) desktop 
 - **Tasks** in the style of Google Tasks, one block per task list: open tasks sorted by due date with overdue ones in red, **Add task** with a due date, description and list, and a collapsed block of completed tasks. A click completes a task or brings it back.
 - **Sync** buttons make dcal sync with Google right away and show whether it worked (rate limit, sign-in needed, offline).
 
-The interface is in Russian for now.
+The interface is in English and Russian.
 
 ## Requirements
 
@@ -23,7 +23,11 @@ In DMS Settings → Plugins, add the registry `https://github.com/ilyamen/dms-pl
 git clone https://github.com/ilyamen/dms-agenda ~/.config/DankMaterialShell/plugins/dcalAgenda
 ```
 
-Enable it in Settings → Plugins and add the widget in Settings → Desktop Widgets.
+Enable it in Settings → Plugins and add the widget in Settings → Desktop Widgets. The widget's settings are on its card there.
+
+## Removal
+
+Uninstall the plugin in Settings → Plugins. It keeps nothing outside its folder.
 
 ## Settings
 

@@ -1,0 +1,140 @@
+{
+    " min": {
+        " min": " мин"
+    },
+    "%1 day ago|%1 days ago": {
+        "%1 day ago|%1 days ago": "%1 день назад|%1 дня назад|%1 дней назад"
+    },
+    "%1 month ago|%1 months ago": {
+        "%1 month ago|%1 months ago": "%1 месяц назад|%1 месяца назад|%1 месяцев назад"
+    },
+    "%1 task completed|%1 tasks completed": {
+        "%1 task completed|%1 tasks completed": "%1 задача выполнена|%1 задачи выполнено|%1 задач выполнено"
+    },
+    "%1 week ago|%1 weeks ago": {
+        "%1 week ago|%1 weeks ago": "%1 неделю назад|%1 недели назад|%1 недель назад"
+    },
+    "(no title)": {
+        "(no title)": "(без названия)"
+    },
+    "Add a description": {
+        "Add a description": "Добавьте описание"
+    },
+    "Add a title": {
+        "Add a title": "Добавьте название"
+    },
+    "Add task": {
+        "Add task": "Добавить задачу"
+    },
+    "All tasks complete 🎉": {
+        "All tasks complete 🎉": "Все задачи выполнены 🎉"
+    },
+    "Background opacity": {
+        "Background opacity": "Непрозрачность фона"
+    },
+    "Calendar": {
+        "Calendar": "Календарь"
+    },
+    "Cancel": {
+        "Cancel": "Отмена"
+    },
+    "Completed %1": {
+        "Completed %1": "Выполнена: %1"
+    },
+    "DankCalendar (dcal) is required": {
+        "DankCalendar (dcal) is required": "Нужен DankCalendar (dcal)"
+    },
+    "Days ahead": {
+        "Days ahead": "Дней вперёд"
+    },
+    "Due %1": {
+        "Due %1": "Срок: %1"
+    },
+    "Event": {
+        "Event": "Событие"
+    },
+    "Google rate limit": {
+        "Google rate limit": "лимит Google"
+    },
+    "Google sign-in needed": {
+        "Google sign-in needed": "нужен вход в Google"
+    },
+    "How many days of events to show. Days without events are skipped.": {
+        "How many days of events to show. Days without events are skipped.": "Сколько дней показывать в календаре. Дни без событий пропускаются."
+    },
+    "How often to re-read events and tasks from dcal. dcal syncs with Google on its own; the sync button on the widget does it right away.": {
+        "How often to re-read events and tasks from dcal. dcal syncs with Google on its own; the sync button on the widget does it right away.": "Как часто перечитывать события и задачи из dcal. С Google dcal синхронизируется сам, а кнопка синхронизации на виджете запускает её сразу."
+    },
+    "In a week": {
+        "In a week": "Через неделю"
+    },
+    "Mine": {
+        "Mine": "Мой"
+    },
+    "My Tasks": {
+        "My Tasks": "Мои задачи"
+    },
+    "No date": {
+        "No date": "Без даты"
+    },
+    "No events in the next %1 day|No events in the next %1 days": {
+        "No events in the next %1 day|No events in the next %1 days": "Событий на %1 день нет|Событий на %1 дня нет|Событий на %1 дней нет"
+    },
+    "No task lists": {
+        "No task lists": "Списков задач нет"
+    },
+    "Refresh every": {
+        "Refresh every": "Обновлять каждые"
+    },
+    "Save": {
+        "Save": "Сохранить"
+    },
+    "The widget shows events and tasks from dcal. Install DankCalendar, add an account with “dcal account setup google”, then re-enable the plugin.": {
+        "The widget shows events and tasks from dcal. Install DankCalendar, add an account with “dcal account setup google”, then re-enable the plugin.": "Виджет показывает события и задачи из dcal. Установите DankCalendar, подключите аккаунт командой «dcal account setup google» и снова включите плагин."
+    },
+    "Today": {
+        "Today": "Сегодня"
+    },
+    "Tomorrow": {
+        "Tomorrow": "Завтра"
+    },
+    "all day": {
+        "all day": "весь день"
+    },
+    "dcal is not responding": {
+        "dcal is not responding": "dcal не отвечает"
+    },
+    "dd.mm": {
+        "dd.mm": "дд.мм"
+    },
+    "ddd, MMM d": {
+        "ddd, MMM d": "ddd, d MMM"
+    },
+    "dddd, MMMM d": {
+        "dddd, MMMM d": "dddd, d MMMM"
+    },
+    "dddd, MMMM d, yyyy": {
+        "dddd, MMMM d, yyyy": "dddd, d MMMM yyyy"
+    },
+    "offline": {
+        "offline": "нет сети"
+    },
+    "sync error": {
+        "sync error": "ошибка синхр."
+    },
+    "synced %1": {
+        "synced %1": "синхр. %1"
+    },
+    "syncing…": {
+        "syncing…": "синхронизация…"
+    },
+    "today": {
+        "today": "сегодня"
+    },
+    "tomorrow": {
+        "tomorrow": "завтра"
+    },
+    "yesterday": {
+        "yesterday": "вчера"
+    }
+}

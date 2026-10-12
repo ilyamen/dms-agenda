@@ -2,7 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Modules.Plugins
 
-// Календари для показа выбираются чипами прямо на виджете
+// Calendars to show are picked with the chips on the widget itself
 PluginSettings {
     id: root
 
@@ -10,8 +10,8 @@ PluginSettings {
 
     SliderSetting {
         settingKey: "daysAhead"
-        label: "Дней вперёд"
-        description: "Сколько дней показывать в календаре. Дни без событий пропускаются."
+        label: I18n.trFor("dcalAgenda", "Days ahead")
+        description: I18n.trFor("dcalAgenda", "How many days of events to show. Days without events are skipped.")
         defaultValue: 14
         minimum: 1
         maximum: 60
@@ -19,17 +19,17 @@ PluginSettings {
 
     SliderSetting {
         settingKey: "refreshMinutes"
-        label: "Обновлять каждые"
-        description: "Как часто перечитывать события и задачи из dcal. Синхронизацию с Google dcal делает сам, кнопка синхронизации на виджете запускает её сразу."
+        label: I18n.trFor("dcalAgenda", "Refresh every")
+        description: I18n.trFor("dcalAgenda", "How often to re-read events and tasks from dcal. dcal syncs with Google on its own; the sync button on the widget does it right away.")
         defaultValue: 5
         minimum: 1
         maximum: 60
-        unit: " мин"
+        unit: I18n.trFor("dcalAgenda", " min")
     }
 
     SliderSetting {
         settingKey: "backgroundOpacity"
-        label: "Непрозрачность фона"
+        label: I18n.trFor("dcalAgenda", "Background opacity")
         defaultValue: 80
         minimum: 0
         maximum: 100

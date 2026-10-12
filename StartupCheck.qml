@@ -9,8 +9,8 @@ QtObject {
                 return;
             }
             done({
-                "title": "Нужен DankCalendar (dcal)",
-                "details": "Виджет берёт события и задачи из dcal. Установите DankCalendar, подключите аккаунт командой «dcal account setup google» и снова включите плагин."
+                "title": I18n.trFor("dcalAgenda", "DankCalendar (dcal) is required"),
+                "details": I18n.trFor("dcalAgenda", "The widget shows events and tasks from dcal. Install DankCalendar, add an account with “dcal account setup google”, then re-enable the plugin.")
             });
         });
     }

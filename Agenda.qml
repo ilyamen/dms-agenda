@@ -5,9 +5,9 @@ import qs.Common
 import qs.Widgets
 import qs.Modules.Plugins
 
-// Календарь и задачи из DankCalendar (dcal) на рабочем столе.
-// Слева — события по дням с фильтром календарей, справа — списки задач в стиле Google Tasks.
-// Все данные и изменения идут через `dcal ipc ...` (dcal сам синхронизирует с Google).
+// Calendar and tasks from DankCalendar (dcal) on the desktop.
+// Left: events by day with a calendar filter. Right: task lists in the style of Google Tasks.
+// All data and changes go through `dcal ipc ...`; dcal syncs with Google itself.
 DesktopPluginComponent {
     id: root
 
@@ -18,25 +18,25 @@ DesktopPluginComponent {
     property int refreshMinutes: pluginData.refreshMinutes ?? 5
     property real backgroundOpacity: (pluginData.backgroundOpacity ?? 80) / 100
 
-    property var calendars: []        // все календари и списки задач из dcal
+    property var calendars: []        // every calendar and task list in dcal
     property var events: []
     property var tasks: []
     property var hiddenCalendars: pluginData.hiddenCalendars ?? []
-    property var expandedDone: ({})   // calendarId -> развернут ли блок выполненных
+    property var expandedDone: ({})   // calendarId -> whether the completed block is expanded
     property string errorText: ""
 
-    // Поле «Добавить задачу»: пока оно открыто, виджет принимает клавиатуру
+    // While the task editor is open the widget takes keyboard input
     property string addingToList: ""
     property bool acceptsKeyboardFocus: addingToList !== ""
 
     readonly property color bgColor: Theme.withAlpha(Theme.surface, backgroundOpacity)
     readonly property color tileBg: Theme.withAlpha(Theme.surfaceContainerHigh, backgroundOpacity)
 
-    // у Google-календарей supportedComponents пустой — это календари событий; списки задач помечены holdsTasks
+    // Google calendars have empty supportedComponents and hold events; task lists are marked holdsTasks
     readonly property var eventCalendars: calendars.filter(c => !c.supportedComponents || c.supportedComponents.indexOf("VEVENT") >= 0)
     readonly property var taskLists: calendars.filter(c => c.holdsTasks && (c.supportedComponents || []).indexOf("VTODO") >= 0)
 
-    // ---------- даты ----------
+    // ---------- dates ----------
 
     function pad(n) { return n < 10 ? "0" + n : "" + n; }
 
@@ -48,7 +48,7 @@ DesktopPluginComponent {
             + sign + pad(Math.floor(Math.abs(off) / 60)) + ":" + pad(Math.abs(off) % 60);
     }
 
-    // Для событий «на весь день» и сроков задач Google отдаёт полночь UTC — берём только дату
+    // For all-day events and task due dates Google returns midnight UTC: keep only the date
     function toDate(v, dateOnly) {
         if (!v)
             return null;
@@ -71,55 +71,59 @@ DesktopPluginComponent {
         return Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
     }
 
-    function plural(n, one, few, many) {
-        const m10 = n % 10, m100 = n % 100;
-        if (m10 === 1 && m100 !== 11)
-            return one;
-        if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14))
-            return few;
-        return many;
+    // forms: "one|other" in English, "one|few|many" in Russian translations
+    function plural(n, forms) {
+        const f = forms.split("|");
+        let form = f[f.length - 1];
+        if (f.length === 2) {
+            form = n === 1 ? f[0] : f[1];
+        } else if (f.length >= 3) {
+            const m10 = n % 10, m100 = n % 100;
+            form = m10 === 1 && m100 !== 11 ? f[0] : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? f[1] : f[2];
+        }
+        return form.arg(n);
     }
 
     function dayLabel(d) {
         const diff = daysFromToday(d);
         if (diff === 0)
-            return "Сегодня";
+            return I18n.trFor("dcalAgenda", "Today");
         if (diff === 1)
-            return "Завтра";
-        const s = Qt.locale("ru_RU").toString(d, "dddd, d MMMM");
+            return I18n.trFor("dcalAgenda", "Tomorrow");
+        const s = I18n.locale().toString(d, I18n.trFor("dcalAgenda", "dddd, MMMM d"));
         return s.charAt(0).toUpperCase() + s.slice(1);
     }
 
     function timeLabel(e) {
         if (e.allDay)
-            return "весь день";
+            return I18n.trFor("dcalAgenda", "all day");
         return Qt.formatTime(e.start, "HH:mm") + (e.end ? "–" + Qt.formatTime(e.end, "HH:mm") : "");
     }
 
-    // «11 недель назад», «сегодня», «завтра», «пт, 17 окт.»
+    // "11 weeks ago", "today", "tomorrow", "Fri, Oct 17"
     function dueLabel(d) {
         const diff = daysFromToday(d);
         if (diff === 0)
-            return "сегодня";
+            return I18n.trFor("dcalAgenda", "today");
         if (diff === 1)
-            return "завтра";
+            return I18n.trFor("dcalAgenda", "tomorrow");
         if (diff === -1)
-            return "вчера";
+            return I18n.trFor("dcalAgenda", "yesterday");
         if (diff < 0) {
             const n = -diff;
             if (n < 14)
-                return n + " " + plural(n, "день", "дня", "дней") + " назад";
+                return plural(n, I18n.trFor("dcalAgenda", "%1 day ago|%1 days ago"));
             if (n < 91) {
                 const w = Math.floor(n / 7);
-                return w + " " + plural(w, "неделю", "недели", "недель") + " назад";
+                return plural(w, I18n.trFor("dcalAgenda", "%1 week ago|%1 weeks ago"));
             }
             const mo = Math.floor(n / 30);
-            return mo + " " + plural(mo, "месяц", "месяца", "месяцев") + " назад";
+            return plural(mo, I18n.trFor("dcalAgenda", "%1 month ago|%1 months ago"));
         }
-        return Qt.locale("ru_RU").toString(d, "ddd, d MMM");
+        return I18n.locale().toString(d, I18n.trFor("dcalAgenda", "ddd, MMM d"));
     }
 
-    // ---------- данные ----------
+    // ---------- data ----------
 
     function calendarById(id) {
         return calendars.find(c => c.id === id) || null;
@@ -145,7 +149,7 @@ DesktopPluginComponent {
             root.errorText = "";
             return Array.isArray(obj) ? obj : (obj[key] || []);
         } catch (e) {
-            root.errorText = "dcal не отвечает";
+            root.errorText = I18n.trFor("dcalAgenda", "dcal is not responding");
             return null;
         }
     }
@@ -171,7 +175,7 @@ DesktopPluginComponent {
                     return;
                 const list = raw.filter(e => e.status !== "cancelled").map(e => ({
                     uid: e.uid,
-                    title: e.summary || "(без названия)",
+                    title: e.summary || I18n.trFor("dcalAgenda", "(no title)"),
                     allDay: !!e.allDay,
                     rawStart: e.start,
                     start: root.toDate(e.start, !!e.allDay),
@@ -194,7 +198,7 @@ DesktopPluginComponent {
                     return;
                 root.tasks = raw.filter(t => t.status !== "cancelled").map(t => ({
                     id: t.id,
-                    title: t.summary || "(без названия)",
+                    title: t.summary || I18n.trFor("dcalAgenda", "(no title)"),
                     due: root.toDate(t.due, true),
                     done: t.status === "completed",
                     completedAt: root.toDate(t.completed, false),
@@ -204,7 +208,7 @@ DesktopPluginComponent {
         }
     }
 
-    // Изменения (создать / выполнить / вернуть) — по одному, затем обновляем
+    // Changes (create / complete / reopen) run one at a time, then the lists refresh
     property var pendingCommands: []
 
     function runCommand(cmd) {
@@ -229,12 +233,12 @@ DesktopPluginComponent {
     }
 
     function setTaskDone(task, done) {
-        // мгновенно в интерфейсе, не дожидаясь dcal
+        // update the view at once instead of waiting for dcal
         root.tasks = root.tasks.map(t => t.id === task.id ? Object.assign({}, t, { done: done, completedAt: done ? new Date() : null }) : t);
         runCommand(["dcal", "ipc", "tasks.complete", "id=" + task.id, "completed=" + done]);
     }
 
-    // Google Tasks хранит у задачи только дату (без времени) — шлём полночь UTC этого дня
+    // Google Tasks keeps only a date for a task, so send midnight UTC of that day
     function dueParam(d) {
         return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T00:00:00Z";
     }
@@ -248,7 +252,7 @@ DesktopPluginComponent {
             cmd.push("due=" + dueParam(due), "allDay=true");
         if (description && description.trim())
             cmd.push("description=" + description.trim());
-        // сразу показываем в списке, dcal догонит при обновлении
+        // show it in the list at once; dcal catches up on refresh
         root.tasks = root.tasks.concat([{ id: "pending-" + Date.now(), title: title, due: due, done: false, completedAt: null, calendarId: listId }]);
         runCommand(cmd);
     }
@@ -272,7 +276,7 @@ DesktopPluginComponent {
         const d = new Date(y, +m[2] - 1, +m[1]);
         if (isNaN(d.getTime()) || d.getDate() !== +m[1])
             return null;
-        // «12.01» без года, если дата уже прошла, — значит следующий год
+        // "12.01" without a year that has already passed means next year
         if (!m[3] && daysFromToday(d) < 0)
             d.setFullYear(y + 1);
         return d;
@@ -305,7 +309,7 @@ DesktopPluginComponent {
         }
     }
 
-    // Редактор новой задачи: название, срок, описание, список
+    // New task editor: title, due date, description, list
     component TaskEditor: Rectangle {
         id: ed
         property var due: null
@@ -360,7 +364,7 @@ DesktopPluginComponent {
             anchors.margins: Theme.spacingM
             spacing: Theme.spacingM
 
-            // Название
+            // Title
             Column {
                 Layout.fillWidth: true
                 spacing: 4
@@ -376,7 +380,7 @@ DesktopPluginComponent {
                     Keys.onEscapePressed: ed.close()
                     StyledText {
                         visible: !titleInput.text
-                        text: "Добавьте название"
+                        text: I18n.trFor("dcalAgenda", "Add a title")
                         font.pixelSize: Theme.fontSizeLarge
                         color: Theme.surfaceTextSecondary
                     }
@@ -384,7 +388,7 @@ DesktopPluginComponent {
                 Rectangle { width: parent.width; height: 1; color: titleInput.activeFocus ? Theme.primary : Theme.outlineVariant }
             }
 
-            // Срок
+            // Due date
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
@@ -392,11 +396,11 @@ DesktopPluginComponent {
                 Flow {
                     Layout.fillWidth: true
                     spacing: Theme.spacingXS
-                    Chip { label: "Без даты"; selected: ed.dueMode === "none"; onClicked: ed.setDue("none") }
-                    Chip { label: "Сегодня"; selected: ed.dueMode === "today"; onClicked: ed.setDue("today") }
-                    Chip { label: "Завтра"; selected: ed.dueMode === "tomorrow"; onClicked: ed.setDue("tomorrow") }
-                    Chip { label: "Через неделю"; selected: ed.dueMode === "week"; onClicked: ed.setDue("week") }
-                    // своя дата: дд.мм или дд.мм.гггг
+                    Chip { label: I18n.trFor("dcalAgenda", "No date"); selected: ed.dueMode === "none"; onClicked: ed.setDue("none") }
+                    Chip { label: I18n.trFor("dcalAgenda", "Today"); selected: ed.dueMode === "today"; onClicked: ed.setDue("today") }
+                    Chip { label: I18n.trFor("dcalAgenda", "Tomorrow"); selected: ed.dueMode === "tomorrow"; onClicked: ed.setDue("tomorrow") }
+                    Chip { label: I18n.trFor("dcalAgenda", "In a week"); selected: ed.dueMode === "week"; onClicked: ed.setDue("week") }
+                    // own date: dd.mm or dd.mm.yyyy
                     Rectangle {
                         implicitHeight: dateInput.implicitHeight + Theme.spacingXS * 2
                         implicitWidth: 110
@@ -424,7 +428,7 @@ DesktopPluginComponent {
                             StyledText {
                                 visible: !dateInput.text
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: "дд.мм"
+                                text: I18n.trFor("dcalAgenda", "dd.mm")
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceTextSecondary
                             }
@@ -435,12 +439,12 @@ DesktopPluginComponent {
             StyledText {
                 visible: !!ed.due
                 Layout.leftMargin: Theme.iconSize + Theme.spacingS - 4
-                text: ed.due ? "Срок: " + Qt.locale("ru_RU").toString(ed.due, "dddd, d MMMM yyyy") : ""
+                text: ed.due ? I18n.trFor("dcalAgenda", "Due %1").arg(I18n.locale().toString(ed.due, I18n.trFor("dcalAgenda", "dddd, MMMM d, yyyy"))) : ""
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceTextSecondary
             }
 
-            // Описание
+            // Description
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
@@ -462,7 +466,7 @@ DesktopPluginComponent {
                         Keys.onEscapePressed: ed.close()
                         StyledText {
                             visible: !descInput.text
-                            text: "Добавьте описание"
+                            text: I18n.trFor("dcalAgenda", "Add a description")
                             font.pixelSize: Theme.fontSizeMedium
                             color: Theme.surfaceTextSecondary
                         }
@@ -470,7 +474,7 @@ DesktopPluginComponent {
                 }
             }
 
-            // Список (если их несколько)
+            // List (when there are several)
             RowLayout {
                 visible: root.taskLists.length > 1
                 Layout.fillWidth: true
@@ -491,12 +495,12 @@ DesktopPluginComponent {
                 }
             }
 
-            // Кнопки
+            // Buttons
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
                 Item { Layout.fillWidth: true }
-                Chip { label: "Отмена"; onClicked: ed.close() }
+                Chip { label: I18n.trFor("dcalAgenda", "Cancel"); onClicked: ed.close() }
                 Rectangle {
                     implicitHeight: saveText.implicitHeight + Theme.spacingS * 2
                     implicitWidth: saveText.implicitWidth + Theme.spacingL * 2
@@ -506,7 +510,7 @@ DesktopPluginComponent {
                     StyledText {
                         id: saveText
                         anchors.centerIn: parent
-                        text: "Сохранить"
+                        text: I18n.trFor("dcalAgenda", "Save")
                         font.pixelSize: Theme.fontSizeMedium
                         font.weight: Font.Medium
                         color: parent.ready ? Theme.primaryText : Theme.surfaceTextSecondary
@@ -522,7 +526,7 @@ DesktopPluginComponent {
     }
 
     function listName(c) {
-        return /'s list$/.test(c.name) ? "Мои задачи" : c.name;
+        return /'s list$/.test(c.name) ? I18n.trFor("dcalAgenda", "My Tasks") : c.name;
     }
 
     function toggleCalendar(id) {
@@ -543,8 +547,8 @@ DesktopPluginComponent {
         }
     }
 
-    // ---------- синхронизация ----------
-    // dcal сам синхронизирует аккаунт примерно раз в минуту; ошибки пишет в журнал systemd.
+    // ---------- sync ----------
+    // dcal syncs the account about once a minute and logs errors to the systemd journal.
     // syncState: idle | syncing | ok | error
 
     property string syncState: "idle"
@@ -553,12 +557,12 @@ DesktopPluginComponent {
 
     function syncErrorText(line) {
         if (/retry deferred|rateLimit|quota/i.test(line))
-            return "лимит Google";
+            return I18n.trFor("dcalAgenda", "Google rate limit");
         if (/auth|token|401|invalid_grant/i.test(line))
-            return "нужен вход в Google";
+            return I18n.trFor("dcalAgenda", "Google sign-in needed");
         if (/dial|timeout|network|no such host/i.test(line))
-            return "нет сети";
-        return "ошибка синхр.";
+            return I18n.trFor("dcalAgenda", "offline");
+        return I18n.trFor("dcalAgenda", "sync error");
     }
 
     function applySyncResult(text) {
@@ -580,7 +584,7 @@ DesktopPluginComponent {
         syncProc.running = true;
     }
 
-    // Ручная синхронизация: запускаем, ждём, смотрим, не было ли ошибки за это время
+    // Manual sync: start it, wait, then look for errors logged meanwhile
     Process {
         id: syncProc
         command: ["sh", "-c", "dcal ipc accounts.refresh >/dev/null 2>&1; sleep 8; journalctl --user -u dcal --since -12s -o cat 2>/dev/null | grep 'sync error' | tail -n1"]
@@ -592,7 +596,7 @@ DesktopPluginComponent {
         }
     }
 
-    // Фоновая проверка: были ли ошибки синхронизации за последние 3 минуты
+    // Background check: any sync errors in the last 3 minutes
     Process {
         id: statusProc
         command: ["sh", "-c", "journalctl --user -u dcal --since -3min -o cat 2>/dev/null | grep 'sync error' | tail -n1"]
@@ -601,13 +605,13 @@ DesktopPluginComponent {
         }
     }
 
-    // Иконка + статус синхронизации для заголовков
+    // Sync icon and status for the headers
     component SyncButton: RowLayout {
         spacing: Theme.spacingXS
         StyledText {
-            text: root.syncState === "syncing" ? "синхронизация…"
+            text: root.syncState === "syncing" ? I18n.trFor("dcalAgenda", "syncing…")
                 : root.syncState === "error" ? root.syncError
-                : root.syncState === "ok" ? "синхр. " + Qt.formatTime(root.lastOk, "HH:mm") : ""
+                : root.syncState === "ok" ? I18n.trFor("dcalAgenda", "synced %1").arg(Qt.formatTime(root.lastOk, "HH:mm")) : ""
             font.pixelSize: Theme.fontSizeSmall
             color: root.syncState === "error" ? Theme.error : Theme.surfaceTextSecondary
         }
@@ -639,7 +643,7 @@ DesktopPluginComponent {
         }
     }
 
-    // события видимых календарей, сгруппированные по дням (пустые дни не показываем)
+    // events of the shown calendars grouped by day; days without events are skipped
     readonly property var eventGroups: {
         const groups = [];
         for (const e of events) {
@@ -655,7 +659,7 @@ DesktopPluginComponent {
 
     function openTasks(listId) {
         const list = tasks.filter(t => t.calendarId === listId && !t.done);
-        // как в Google: сначала со сроком (раньше — выше), потом без срока
+        // as in Google: tasks with a due date first (earliest on top), then the rest
         list.sort((a, b) => (a.due ? a.due.getTime() : 8.64e15) - (b.due ? b.due.getTime() : 8.64e15));
         return list;
     }
@@ -666,7 +670,7 @@ DesktopPluginComponent {
         return list;
     }
 
-    // ---------- общие элементы ----------
+    // ---------- shared components ----------
 
     component HeaderButton: Rectangle {
         id: hb
@@ -694,7 +698,7 @@ DesktopPluginComponent {
         }
     }
 
-    // ---------- вид ----------
+    // ---------- view ----------
 
     Rectangle {
         anchors.fill: parent
@@ -706,7 +710,7 @@ DesktopPluginComponent {
             anchors.margins: Theme.spacingL
             spacing: Theme.spacingL
 
-            // ===== Календарь =====
+            // ===== Calendar =====
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -717,17 +721,17 @@ DesktopPluginComponent {
                     Layout.fillWidth: true
                     spacing: Theme.spacingS
                     DankIcon { name: "calendar_month"; size: Theme.iconSize; color: Theme.primary }
-                    StyledText { text: "Календарь"; font.pixelSize: Theme.fontSizeLarge; font.weight: Font.Medium; color: Theme.surfaceText }
+                    StyledText { text: I18n.trFor("dcalAgenda", "Calendar"); font.pixelSize: Theme.fontSizeLarge; font.weight: Font.Medium; color: Theme.surfaceText }
                     Item { Layout.fillWidth: true }
                     SyncButton {}
                     HeaderButton {
                         icon: "add"
-                        label: "Событие"
+                        label: I18n.trFor("dcalAgenda", "Event")
                         onClicked: root.runCommand(["dcal", "ipc", "ui.newEvent"])
                     }
                 }
 
-                // Фильтр календарей: клик — скрыть / показать
+                // Calendar filter: click to hide or show
                 Flow {
                     Layout.fillWidth: true
                     spacing: Theme.spacingXS
@@ -751,7 +755,7 @@ DesktopPluginComponent {
                                 spacing: Theme.spacingXS
                                 Rectangle { width: 8; height: 8; radius: 4; color: modelData.color || Theme.primary; opacity: parent.parent.shown ? 1 : 0.4 }
                                 StyledText {
-                                    text: modelData.name.indexOf("@") > 0 ? "Мой" : modelData.name
+                                    text: modelData.name.indexOf("@") > 0 ? I18n.trFor("dcalAgenda", "Mine") : modelData.name
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: parent.parent.shown ? Theme.surfaceText : Theme.surfaceTextSecondary
                                     font.strikeout: !parent.parent.shown
@@ -844,7 +848,7 @@ DesktopPluginComponent {
                     StyledText {
                         anchors.centerIn: parent
                         visible: root.eventGroups.length === 0
-                        text: root.errorText || ("Событий на " + root.daysAhead + " " + root.plural(root.daysAhead, "день", "дня", "дней") + " нет")
+                        text: root.errorText || root.plural(root.daysAhead, I18n.trFor("dcalAgenda", "No events in the next %1 day|No events in the next %1 days"))
                         color: Theme.surfaceTextSecondary
                         font.pixelSize: Theme.fontSizeMedium
                     }
@@ -858,7 +862,7 @@ DesktopPluginComponent {
                 opacity: 0.5
             }
 
-            // ===== Задачи =====
+            // ===== Tasks =====
             Flickable {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -874,7 +878,7 @@ DesktopPluginComponent {
 
                     StyledText {
                         visible: root.taskLists.length === 0
-                        text: root.errorText || "Списков задач нет"
+                        text: root.errorText || I18n.trFor("dcalAgenda", "No task lists")
                         color: Theme.surfaceTextSecondary
                         font.pixelSize: Theme.fontSizeMedium
                     }
@@ -892,7 +896,7 @@ DesktopPluginComponent {
                             Layout.fillWidth: true
                             spacing: Theme.spacingXS
 
-                            // Название списка
+                            // List name
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.bottomMargin: Theme.spacingXS
@@ -915,7 +919,7 @@ DesktopPluginComponent {
                                 SyncButton { visible: listBlock.index === 0 }
                             }
 
-                            // Добавить задачу: строка-кнопка, по клику — редактор как в Google
+                            // Add task: a button row that opens the editor, as in Google
                             Rectangle {
                                 visible: root.addingToList !== listBlock.modelData.id
                                 Layout.fillWidth: true
@@ -930,7 +934,7 @@ DesktopPluginComponent {
                                     spacing: Theme.spacingS
                                     DankIcon { name: "add_task"; size: Theme.iconSize - 2; color: Theme.primary }
                                     StyledText {
-                                        text: "Добавить задачу"
+                                        text: I18n.trFor("dcalAgenda", "Add task")
                                         font.pixelSize: Theme.fontSizeMedium
                                         font.weight: Font.Medium
                                         color: Theme.primary
@@ -951,7 +955,7 @@ DesktopPluginComponent {
                                 Layout.fillWidth: true
                             }
 
-                            // Невыполненные (включая просроченные)
+                            // Open tasks, overdue ones included
                             Repeater {
                                 model: listBlock.open
                                 delegate: Rectangle {
@@ -992,7 +996,7 @@ DesktopPluginComponent {
                                                 wrapMode: Text.Wrap
                                                 Layout.fillWidth: true
                                             }
-                                            // плашка срока
+                                            // due date chip
                                             Rectangle {
                                                 visible: !!modelData.due
                                                 implicitHeight: dueRow.implicitHeight + 4
@@ -1026,13 +1030,13 @@ DesktopPluginComponent {
 
                             StyledText {
                                 visible: listBlock.open.length === 0
-                                text: "Все задачи выполнены 🎉"
+                                text: I18n.trFor("dcalAgenda", "All tasks complete 🎉")
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: Theme.surfaceTextSecondary
                                 Layout.leftMargin: Theme.spacingS
                             }
 
-                            // Выполненные — свёрнутым блоком
+                            // Completed tasks in a collapsed block
                             Rectangle {
                                 visible: listBlock.done.length > 0
                                 Layout.fillWidth: true
@@ -1053,7 +1057,7 @@ DesktopPluginComponent {
                                     }
                                     StyledText {
                                         readonly property int n: listBlock.done.length
-                                        text: n + " " + root.plural(n, "задача выполнена", "задачи выполнено", "задач выполнено")
+                                        text: root.plural(n, I18n.trFor("dcalAgenda", "%1 task completed|%1 tasks completed"))
                                         font.pixelSize: Theme.fontSizeMedium
                                         font.weight: Font.Medium
                                         color: Theme.surfaceTextSecondary
@@ -1106,7 +1110,7 @@ DesktopPluginComponent {
                                         }
                                         StyledText {
                                             visible: !!modelData.completedAt
-                                            text: modelData.completedAt ? "Выполнена: " + Qt.locale("ru_RU").toString(modelData.completedAt, "ddd, d MMM") : ""
+                                            text: modelData.completedAt ? I18n.trFor("dcalAgenda", "Completed %1").arg(I18n.locale().toString(modelData.completedAt, I18n.trFor("dcalAgenda", "ddd, MMM d"))) : ""
                                             font.pixelSize: Theme.fontSizeSmall
                                             color: Theme.surfaceTextSecondary
                                         }
