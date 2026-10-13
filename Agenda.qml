@@ -100,6 +100,43 @@ DesktopPluginComponent {
         return Qt.formatTime(e.start, "HH:mm") + (e.end ? "–" + Qt.formatTime(e.end, "HH:mm") : "");
     }
 
+    // ---------- now ----------
+
+    // Re-evaluated every 30 s so "current" and "soon" follow the clock
+    property real now: Date.now()
+    readonly property int soonMinutes: pluginData.soonMinutes ?? 5
+    readonly property bool pulseEnabled: (pluginData.pulseCurrent ?? true) && !SettingsData.reduceMotion
+
+    Timer {
+        interval: 30000
+        running: true
+        repeat: true
+        onTriggered: root.now = Date.now()
+    }
+
+    // "past" | "now" | "soon" (starts within soonMinutes) | ""
+    function eventState(e) {
+        if (e.allDay || !e.start)
+            return "";
+        const start = e.start.getTime();
+        const end = e.end ? e.end.getTime() : start;
+        if (now >= end)
+            return "past";
+        if (now >= start)
+            return "now";
+        if (now >= start - soonMinutes * 60000)
+            return "soon";
+        return "";
+    }
+
+    function eventBadge(e, st) {
+        if (st === "now")
+            return e.end ? I18n.trFor("dcalAgenda", "Now · until %1").arg(Qt.formatTime(e.end, "HH:mm")) : I18n.trFor("dcalAgenda", "Now");
+        if (st === "soon")
+            return plural(Math.max(1, Math.ceil((e.start.getTime() - now) / 60000)), I18n.trFor("dcalAgenda", "In %1 min|In %1 min"));
+        return "";
+    }
+
     // "11 weeks ago", "today", "tomorrow", "Fri, Oct 17"
     function dueLabel(d) {
         const diff = daysFromToday(d);
@@ -792,19 +829,61 @@ DesktopPluginComponent {
                         Repeater {
                             model: modelData.items
                             delegate: Rectangle {
+                                id: eventCard
                                 required property var modelData
+                                readonly property string evState: root.eventState(modelData)
+                                readonly property bool active: evState === "now" || evState === "soon"
                                 width: parent.width
                                 height: evCol.implicitHeight + Theme.spacingS * 2
                                 radius: Theme.cornerRadius / 2
-                                color: evMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.12) : root.tileBg
+                                // Current and upcoming: a light tint of the theme color; finished: faded
+                                color: evMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.2)
+                                    : evState === "now" ? Theme.withAlpha(Theme.primary, 0.16)
+                                    : evState === "soon" ? Theme.withAlpha(Theme.primary, 0.09)
+                                    : root.tileBg
+                                border.width: evState === "now" ? 1 : 0
+                                border.color: Theme.withAlpha(Theme.primary, 0.45)
+                                opacity: evState === "past" ? 0.5 : 1
+
+                                Behavior on color { ColorAnimation { duration: 400 } }
+                                Behavior on opacity { NumberAnimation { duration: 400 } }
+
+                                // Attention: a few slow, soft glows when the event becomes upcoming or
+                                // current, repeated every 10 minutes while it runs, then calm. Never a
+                                // hard blink; off with the setting or with reduced motion.
+                                Rectangle {
+                                    id: glow
+                                    anchors.fill: parent
+                                    radius: parent.radius
+                                    color: Theme.primary
+                                    opacity: 0
+                                }
+                                SequentialAnimation {
+                                    id: glowAnim
+                                    loops: 3
+                                    NumberAnimation { target: glow; property: "opacity"; to: 0.16; duration: 1200; easing.type: Easing.InOutSine }
+                                    NumberAnimation { target: glow; property: "opacity"; to: 0; duration: 1200; easing.type: Easing.InOutSine }
+                                }
+                                function attention() {
+                                    if (root.pulseEnabled && active)
+                                        glowAnim.restart();
+                                }
+                                onEvStateChanged: attention()
+                                Component.onCompleted: attention()
+                                Timer {
+                                    interval: 600000
+                                    running: eventCard.evState === "now" && root.pulseEnabled
+                                    repeat: true
+                                    onTriggered: eventCard.attention()
+                                }
 
                                 Rectangle {
                                     anchors.left: parent.left
                                     anchors.top: parent.top
                                     anchors.bottom: parent.bottom
                                     anchors.margins: Theme.spacingS
-                                    width: 4
-                                    radius: 2
+                                    width: eventCard.evState === "now" ? 6 : 4
+                                    radius: width / 2
                                     color: root.calendarColor(modelData.calendarId)
                                 }
 
@@ -813,16 +892,44 @@ DesktopPluginComponent {
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
-                                    anchors.leftMargin: Theme.spacingS * 2 + 4
+                                    anchors.leftMargin: Theme.spacingS * 2 + 6
                                     anchors.rightMargin: Theme.spacingS
                                     spacing: 0
 
-                                    StyledText {
-                                        text: modelData.title
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        color: Theme.surfaceText
-                                        elide: Text.ElideRight
+                                    RowLayout {
                                         Layout.fillWidth: true
+                                        spacing: Theme.spacingS
+                                        StyledText {
+                                            text: modelData.title
+                                            font.pixelSize: Theme.fontSizeMedium
+                                            font.weight: eventCard.evState === "now" ? Font.Medium : Font.Normal
+                                            color: Theme.surfaceText
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                        // "Now · until 18:30" / "In 3 min" with a small dot
+                                        Rectangle {
+                                            visible: eventCard.active
+                                            implicitHeight: badgeRow.implicitHeight + 4
+                                            implicitWidth: badgeRow.implicitWidth + Theme.spacingS * 2
+                                            radius: height / 2
+                                            color: eventCard.evState === "now" ? Theme.primary : Theme.withAlpha(Theme.primary, 0.18)
+                                            RowLayout {
+                                                id: badgeRow
+                                                anchors.centerIn: parent
+                                                spacing: 4
+                                                Rectangle {
+                                                    width: 6; height: 6; radius: 3
+                                                    color: eventCard.evState === "now" ? Theme.primaryText : Theme.primary
+                                                }
+                                                StyledText {
+                                                    text: root.eventBadge(eventCard.modelData, eventCard.evState)
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    font.weight: Font.Medium
+                                                    color: eventCard.evState === "now" ? Theme.primaryText : Theme.primary
+                                                }
+                                            }
+                                        }
                                     }
                                     StyledText {
                                         readonly property var cal: root.calendarById(modelData.calendarId)
@@ -960,11 +1067,18 @@ DesktopPluginComponent {
                                 model: listBlock.open
                                 delegate: Rectangle {
                                     required property var modelData
-                                    readonly property bool overdue: !!modelData.due && root.daysFromToday(modelData.due) < 0
+                                    readonly property int dueIn: modelData.due ? (root.now, root.daysFromToday(modelData.due)) : 1
+                                    readonly property bool overdue: !!modelData.due && dueIn < 0
+                                    readonly property bool dueToday: !!modelData.due && dueIn === 0
                                     Layout.fillWidth: true
                                     implicitHeight: taskRow.implicitHeight + Theme.spacingS * 2
                                     radius: Theme.cornerRadius / 2
-                                    color: taskMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.08) : "transparent"
+                                    // Due today: light theme tint; overdue: light red. Tasks have no time
+                                    // of day, so they never animate; color alone sets them apart.
+                                    color: taskMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.14)
+                                        : dueToday ? Theme.withAlpha(Theme.primary, 0.11)
+                                        : overdue ? Theme.withAlpha(Theme.error, 0.08)
+                                        : "transparent"
 
                                     RowLayout {
                                         id: taskRow
@@ -1004,16 +1118,16 @@ DesktopPluginComponent {
                                                 radius: height / 2
                                                 color: "transparent"
                                                 border.width: 1
-                                                border.color: overdue ? Theme.withAlpha(Theme.error, 0.6) : Theme.withAlpha(Theme.surfaceText, 0.25)
+                                                border.color: overdue ? Theme.withAlpha(Theme.error, 0.6) : dueToday ? Theme.withAlpha(Theme.primary, 0.7) : Theme.withAlpha(Theme.surfaceText, 0.25)
                                                 RowLayout {
                                                     id: dueRow
                                                     anchors.centerIn: parent
                                                     spacing: 4
-                                                    DankIcon { name: "schedule"; size: Theme.fontSizeSmall + 2; color: overdue ? Theme.error : Theme.surfaceTextSecondary }
+                                                    DankIcon { name: "schedule"; size: Theme.fontSizeSmall + 2; color: overdue ? Theme.error : dueToday ? Theme.primary : Theme.surfaceTextSecondary }
                                                     StyledText {
                                                         text: modelData.due ? root.dueLabel(modelData.due) : ""
                                                         font.pixelSize: Theme.fontSizeSmall
-                                                        color: overdue ? Theme.error : Theme.surfaceTextSecondary
+                                                        color: overdue ? Theme.error : dueToday ? Theme.primary : Theme.surfaceTextSecondary
                                                     }
                                                 }
                                             }

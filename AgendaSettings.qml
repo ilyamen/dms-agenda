@@ -28,6 +28,23 @@ PluginSettings {
     }
 
     SliderSetting {
+        settingKey: "soonMinutes"
+        label: I18n.trFor("dcalAgenda", "Highlight events before they start")
+        description: I18n.trFor("dcalAgenda", "An event is highlighted this many minutes before it starts and while it runs.")
+        defaultValue: 5
+        minimum: 0
+        maximum: 30
+        unit: I18n.trFor("dcalAgenda", " min")
+    }
+
+    ToggleSetting {
+        settingKey: "pulseCurrent"
+        label: I18n.trFor("dcalAgenda", "Draw attention to the current event")
+        description: I18n.trFor("dcalAgenda", "A few slow, soft glows when an event is about to start and when it starts, repeated every 10 minutes while it runs. Off when DMS reduces motion.")
+        defaultValue: true
+    }
+
+    SliderSetting {
         settingKey: "backgroundOpacity"
         label: I18n.trFor("dcalAgenda", "Background opacity")
         defaultValue: 80
