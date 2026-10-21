@@ -737,10 +737,59 @@ DesktopPluginComponent {
 
     // ---------- view ----------
 
-    Rectangle {
-        anchors.fill: parent
-        radius: Theme.cornerRadius
-        color: root.bgColor
+    property bool isCollapsed: false
+    readonly property real tabWidth: 28
+
+    Item {
+        id: slidingRoot
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: root.width
+
+        x: root.isCollapsed ? (root.width - root.tabWidth) : 0
+
+        Behavior on x {
+            NumberAnimation {
+                duration: 250
+                easing.type: Easing.InOutCubic
+            }
+        }
+
+        Rectangle {
+            id: toggleTab
+            width: root.tabWidth
+            height: 52
+            x: 0
+            y: 30
+            color: root.bgColor
+            topLeftRadius: 16
+            bottomLeftRadius: 16
+            topRightRadius: 0
+            bottomRightRadius: 0
+
+            DankIcon {
+                anchors.centerIn: parent
+                name: root.isCollapsed ? "chevron_left" : "chevron_right"
+                size: Theme.iconSizeSmall
+                color: Theme.primary
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.isCollapsed = !root.isCollapsed
+            }
+        }
+
+        Rectangle {
+            id: calendarBody
+            x: root.tabWidth
+            width: root.width - root.tabWidth
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            radius: Theme.cornerRadius
+            color: root.bgColor
+            clip: true
 
         RowLayout {
             anchors.fill: parent
@@ -1236,5 +1285,6 @@ DesktopPluginComponent {
                 }
             }
         }
+    }
     }
 }
