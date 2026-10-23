@@ -235,6 +235,8 @@ DesktopPluginComponent {
                     return;
                 root.tasks = raw.filter(t => t.status !== "cancelled").map(t => ({
                     id: t.id,
+                    uid: t.uid || "",
+                    parentUid: t.parentUid || "",
                     title: t.summary || I18n.trFor("dcalAgenda", "(no title)"),
                     due: root.toDate(t.due, true),
                     done: t.status === "completed",
@@ -270,9 +272,16 @@ DesktopPluginComponent {
     }
 
     function setTaskDone(task, done) {
+        // As in Google, completing a task completes its open subtasks too
+        const ids = [task.id];
+        if (done && task.uid)
+            for (const t of root.tasks)
+                if (t.parentUid === task.uid && !t.done)
+                    ids.push(t.id);
         // update the view at once instead of waiting for dcal
-        root.tasks = root.tasks.map(t => t.id === task.id ? Object.assign({}, t, { done: done, completedAt: done ? new Date() : null }) : t);
-        runCommand(["dcal", "ipc", "tasks.complete", "id=" + task.id, "completed=" + done]);
+        root.tasks = root.tasks.map(t => ids.indexOf(t.id) >= 0 ? Object.assign({}, t, { done: done, completedAt: done ? new Date() : null }) : t);
+        for (const id of ids)
+            runCommand(["dcal", "ipc", "tasks.complete", "id=" + id, "completed=" + done]);
     }
 
     // Google Tasks keeps only a date for a task, so send midnight UTC of that day
@@ -694,17 +703,43 @@ DesktopPluginComponent {
         return groups;
     }
 
+    // Subtasks (parentUid) follow their parent, indented, as in Google Tasks. A
+    // subtask whose parent is in the other block (open vs completed) stands on
+    // its own and names its parent instead. Returns a flat list with depth.
+    function withSubtasks(list, sorter) {
+        const byUid = {};
+        for (const t of tasks)
+            if (t.uid)
+                byUid[t.uid] = t;
+        const inList = {};
+        for (const t of list)
+            if (t.uid)
+                inList[t.uid] = true;
+        const isChild = t => t.parentUid && inList[t.parentUid];
+        const tops = list.filter(t => !isChild(t)).sort(sorter);
+        const out = [];
+        for (const t of tops) {
+            const parent = t.parentUid ? byUid[t.parentUid] : null;
+            out.push(Object.assign({}, t, {
+                depth: 0,
+                parentTitle: parent ? parent.title : ""
+            }));
+            for (const c of list.filter(c => c.parentUid && c.parentUid === t.uid).sort(sorter))
+                out.push(Object.assign({}, c, {
+                    depth: 1,
+                    parentTitle: ""
+                }));
+        }
+        return out;
+    }
+
     function openTasks(listId) {
-        const list = tasks.filter(t => t.calendarId === listId && !t.done);
         // as in Google: tasks with a due date first (earliest on top), then the rest
-        list.sort((a, b) => (a.due ? a.due.getTime() : 8.64e15) - (b.due ? b.due.getTime() : 8.64e15));
-        return list;
+        return withSubtasks(tasks.filter(t => t.calendarId === listId && !t.done), (a, b) => (a.due ? a.due.getTime() : 8.64e15) - (b.due ? b.due.getTime() : 8.64e15));
     }
 
     function doneTasks(listId) {
-        const list = tasks.filter(t => t.calendarId === listId && t.done);
-        list.sort((a, b) => (b.completedAt ? b.completedAt.getTime() : 0) - (a.completedAt ? a.completedAt.getTime() : 0));
-        return list;
+        return withSubtasks(tasks.filter(t => t.calendarId === listId && t.done), (a, b) => (b.completedAt ? b.completedAt.getTime() : 0) - (a.completedAt ? a.completedAt.getTime() : 0));
     }
 
     // ---------- shared components ----------
@@ -1071,6 +1106,8 @@ DesktopPluginComponent {
                                     readonly property bool overdue: !!modelData.due && dueIn < 0
                                     readonly property bool dueToday: !!modelData.due && dueIn === 0
                                     Layout.fillWidth: true
+                                    // Subtasks sit under their parent with an indent, as in Google Tasks
+                                    Layout.leftMargin: modelData.depth > 0 ? Theme.iconSize + Theme.spacingS : 0
                                     implicitHeight: taskRow.implicitHeight + Theme.spacingS * 2
                                     radius: Theme.cornerRadius / 2
                                     // Due today: light theme tint; overdue: light red. Tasks have no time
@@ -1108,6 +1145,15 @@ DesktopPluginComponent {
                                                 font.pixelSize: Theme.fontSizeMedium
                                                 color: Theme.surfaceText
                                                 wrapMode: Text.Wrap
+                                                Layout.fillWidth: true
+                                            }
+                                            StyledText {
+                                                // A subtask shown apart from its parent names it
+                                                visible: modelData.parentTitle !== ""
+                                                text: "↳ " + modelData.parentTitle
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceTextSecondary
+                                                elide: Text.ElideRight
                                                 Layout.fillWidth: true
                                             }
                                             // due date chip
@@ -1196,7 +1242,7 @@ DesktopPluginComponent {
                                 delegate: RowLayout {
                                     required property var modelData
                                     Layout.fillWidth: true
-                                    Layout.leftMargin: Theme.spacingS
+                                    Layout.leftMargin: Theme.spacingS + (modelData.depth > 0 ? Theme.iconSize + Theme.spacingS : 0)
                                     spacing: Theme.spacingS
 
                                     DankIcon {
@@ -1220,6 +1266,15 @@ DesktopPluginComponent {
                                             font.strikeout: true
                                             color: Theme.surfaceTextSecondary
                                             wrapMode: Text.Wrap
+                                            Layout.fillWidth: true
+                                        }
+                                        StyledText {
+                                            // A subtask shown apart from its parent names it
+                                            visible: modelData.parentTitle !== ""
+                                            text: "↳ " + modelData.parentTitle
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.surfaceTextSecondary
+                                            elide: Text.ElideRight
                                             Layout.fillWidth: true
                                         }
                                         StyledText {
