@@ -25,12 +25,18 @@ DesktopPluginComponent {
     property var hiddenCalendars: pluginData.hiddenCalendars ?? []
     // Tasks whose subtasks are shown; the rest stay collapsed, which is the default
     property var expandedTasks: pluginData.expandedTasks ?? []
-    property var expandedDone: ({})   // calendarId -> whether the completed block is expanded
+    property bool doneExpanded: false   // whether the completed block is expanded
+    // Task lists switched off with the chips in the header
+    property var hiddenTaskLists: pluginData.hiddenTaskLists ?? []
+    readonly property var visibleTaskLists: taskLists.filter(c => hiddenTaskLists.indexOf(c.id) < 0)
     property string errorText: ""
 
     // While the task editor is open the widget takes keyboard input
-    property string addingToList: ""
-    property bool acceptsKeyboardFocus: addingToList !== ""
+    // Where the task editor is open: "" (closed), "new" (top of the column) or
+    // the uid of the task getting a subtask
+    property string editorAt: ""
+    property var editorParent: null
+    property bool acceptsKeyboardFocus: editorAt !== ""
 
     readonly property color bgColor: Theme.withAlpha(Theme.surface, backgroundOpacity)
     readonly property color tileBg: Theme.withAlpha(Theme.surfaceContainerHigh, backgroundOpacity)
@@ -292,23 +298,42 @@ DesktopPluginComponent {
         return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T00:00:00Z";
     }
 
-    function createTask(listId, title, due, description) {
+    function createTask(listId, title, due, description, parentUid) {
         title = title.trim();
         if (!title)
             return;
         const cmd = ["dcal", "ipc", "tasks.create", "calendarId=" + listId, "summary=" + title];
+        if (parentUid)
+            cmd.push("parentUid=" + parentUid);
         if (due)
             cmd.push("due=" + dueParam(due), "allDay=true");
         if (description && description.trim())
             cmd.push("description=" + description.trim());
         // show it in the list at once; dcal catches up on refresh
-        root.tasks = root.tasks.concat([{ id: "pending-" + Date.now(), title: title, due: due, done: false, completedAt: null, calendarId: listId }]);
+        root.tasks = root.tasks.concat([{ id: "pending-" + Date.now(), uid: "", parentUid: parentUid || "", title: title, due: due, done: false, completedAt: null, calendarId: listId }]);
         runCommand(cmd);
     }
 
     function openEditor(listId) {
-        root.editorList = listId;
-        root.addingToList = listId;
+        root.editorList = listId || (visibleTaskLists[0] ?? taskLists[0])?.id || "";
+        root.editorParent = null;
+        root.editorAt = "new";
+    }
+
+    // A subtask goes into the parent's list
+    function openSubtaskEditor(parent) {
+        root.editorList = parent.calendarId;
+        root.editorParent = parent;
+        root.editorAt = parent.uid;
+        if (expandedTasks.indexOf(parent.uid) < 0)
+            toggleSubtasks(parent.uid);
+    }
+
+    function toggleTaskList(id) {
+        const hidden = hiddenTaskLists.indexOf(id) >= 0 ? hiddenTaskLists.filter(x => x !== id) : hiddenTaskLists.concat([id]);
+        hiddenTaskLists = hidden;
+        if (pluginService && pluginService.savePluginData)
+            pluginService.savePluginData(pluginId, "hiddenTaskLists", hidden);
     }
 
     property string editorList: ""
@@ -396,13 +421,14 @@ DesktopPluginComponent {
         function save() {
             if (!titleInput.text.trim())
                 return;
-            root.createTask(root.editorList, titleInput.text, due, descInput.text);
+            root.createTask(root.editorList, titleInput.text, due, descInput.text, root.editorParent ? root.editorParent.uid : "");
             close();
         }
 
         function close() {
             reset();
-            root.addingToList = "";
+            root.editorAt = "";
+            root.editorParent = null;
         }
 
         onVisibleChanged: if (visible) { reset(); titleInput.forceActiveFocus(); }
@@ -412,6 +438,15 @@ DesktopPluginComponent {
             anchors.fill: parent
             anchors.margins: Theme.spacingM
             spacing: Theme.spacingM
+
+            StyledText {
+                visible: !!root.editorParent
+                Layout.fillWidth: true
+                text: root.editorParent ? I18n.trFor("dcalAgenda", "Subtask of “%1”").arg(root.editorParent.title) : ""
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.primary
+                elide: Text.ElideRight
+            }
 
             // Title
             Column {
@@ -525,7 +560,7 @@ DesktopPluginComponent {
 
             // List (when there are several)
             RowLayout {
-                visible: root.taskLists.length > 1
+                visible: root.taskLists.length > 1 && !root.editorParent
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
                 DIcon { name: "list"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary }
@@ -713,56 +748,93 @@ DesktopPluginComponent {
         return groups;
     }
 
-    // Subtasks (parentUid) follow their parent, indented, as in Google Tasks. A
-    // subtask whose parent is in the other block (open vs completed) stands on
-    // its own and names its parent instead. Returns a flat list with depth.
-    function withSubtasks(list, sorter) {
+    // ---------- tasks by day ----------
+
+    readonly property var shownTasks: {
+        const lists = visibleTaskLists.map(c => c.id);
+        return tasks.filter(t => lists.indexOf(t.calendarId) >= 0);
+    }
+
+    function byDue(a, b) {
+        return (a.due ? a.due.getTime() : 8.64e15) - (b.due ? b.due.getTime() : 8.64e15);
+    }
+
+    function byCompleted(a, b) {
+        return (b.completedAt ? b.completedAt.getTime() : 0) - (a.completedAt ? a.completedAt.getTime() : 0);
+    }
+
+    // One card per open top-level task with all its subtasks: open ones first,
+    // then the completed ones, struck out, as in Google Tasks. An open subtask
+    // of a completed task gets a card of its own and names its parent.
+    readonly property var openGroups: {
         const byUid = {};
-        for (const t of tasks)
+        for (const t of shownTasks)
             if (t.uid)
                 byUid[t.uid] = t;
-        const inList = {};
-        for (const t of list)
-            if (t.uid)
-                inList[t.uid] = true;
-        const isChild = t => t.parentUid && inList[t.parentUid];
-        const tops = list.filter(t => !isChild(t)).sort(sorter);
-        const out = [];
-        for (const t of tops) {
+        const isOpenChild = t => t.parentUid && byUid[t.parentUid] && !byUid[t.parentUid].done;
+        const tops = shownTasks.filter(t => !t.done && !isOpenChild(t)).sort(byDue);
+        return tops.map(t => {
             const parent = t.parentUid ? byUid[t.parentUid] : null;
-            out.push(Object.assign({}, t, {
-                depth: 0,
-                parentTitle: parent ? parent.title : ""
-            }));
-            for (const c of list.filter(c => c.parentUid && c.parentUid === t.uid).sort(sorter))
-                out.push(Object.assign({}, c, {
-                    depth: 1,
-                    parentTitle: ""
-                }));
-        }
-        return out;
+            const kids = shownTasks.filter(c => t.uid && c.parentUid === t.uid);
+            const open = kids.filter(c => !c.done).sort(byDue);
+            const done = kids.filter(c => c.done).sort(byCompleted);
+            return {
+                task: Object.assign({}, t, { parentTitle: parent ? parent.title : "" }),
+                children: open.map(c => Object.assign({}, c, { parentTitle: "" })).concat(done.map(c => Object.assign({}, c, { parentTitle: "" }))),
+                openChildren: open.length
+            };
+        });
     }
 
-    function openTasks(listId) {
-        // as in Google: tasks with a due date first (earliest on top), then the rest
-        return withSubtasks(tasks.filter(t => t.calendarId === listId && !t.done), (a, b) => (a.due ? a.due.getTime() : 8.64e15) - (b.due ? b.due.getTime() : 8.64e15));
-    }
-
-    // Open tasks as cards: each top-level task with its subtasks
-    function openTaskGroups(listId) {
-        const groups = [];
-        for (const t of openTasks(listId)) {
-            if (t.depth === 0 || groups.length === 0)
-                groups.push({ task: t, children: [] });
+    // Sections like the calendar's days: overdue, today, tomorrow, later
+    // dates, and last the tasks without a date
+    readonly property var taskDays: {
+        now;
+        const days = [];
+        const find = (key, label, kind) => {
+            let d = days.find(x => x.key === key);
+            if (!d) {
+                d = { key: key, label: label, kind: kind, groups: [] };
+                days.push(d);
+            }
+            return d;
+        };
+        for (const g of openGroups) {
+            const due = g.task.due;
+            if (!due)
+                continue;
+            const diff = daysFromToday(due);
+            if (diff < 0)
+                find("overdue", I18n.trFor("dcalAgenda", "Overdue"), "overdue").groups.push(g);
             else
-                groups[groups.length - 1].children.push(t);
+                find("d" + diff, dayLabel(due), diff === 0 ? "today" : "").groups.push(g);
         }
-        return groups;
+        const undated = openGroups.filter(g => !g.task.due);
+        if (undated.length)
+            days.push({ key: "none", label: I18n.trFor("dcalAgenda", "No date"), kind: "", groups: undated });
+        return days;
     }
 
-    // "overdue" | "today" | "": the due state of one task
+    // Completed tasks for the collapsed block: those not already shown inside
+    // an open task's card
+    readonly property var doneList: {
+        const byUid = {};
+        for (const t of shownTasks)
+            if (t.uid)
+                byUid[t.uid] = t;
+        return shownTasks.filter(t => t.done && !(t.parentUid && byUid[t.parentUid] && !byUid[t.parentUid].done))
+            .sort(byCompleted)
+            .map(t => Object.assign({}, t, { parentTitle: t.parentUid && byUid[t.parentUid] ? byUid[t.parentUid].title : "" }));
+    }
+
+    function listOf(t) {
+        const c = taskLists.find(x => x.id === t.calendarId);
+        return c ? listName(c) : "";
+    }
+
+    // "overdue" | "today" | "": the due state of one open task
     function dueState(t) {
-        if (!t.due)
+        if (!t.due || t.done)
             return "";
         const days = (now, daysFromToday(t.due));
         return days < 0 ? "overdue" : days === 0 ? "today" : "";
@@ -774,10 +846,6 @@ DesktopPluginComponent {
         return states.indexOf("overdue") >= 0 ? "overdue" : states.indexOf("today") >= 0 ? "today" : "";
     }
 
-    function doneTasks(listId) {
-        return withSubtasks(tasks.filter(t => t.calendarId === listId && t.done), (a, b) => (b.completedAt ? b.completedAt.getTime() : 0) - (a.completedAt ? a.completedAt.getTime() : 0));
-    }
-
     // ---------- shared components ----------
 
     // One open task: check circle, title, parent hint, due chip. Its own tint
@@ -786,6 +854,7 @@ DesktopPluginComponent {
         id: row
         required property var task
         property int subtaskCount: 0
+        property string listCaption: ""
         property int subtasksDue: 0
         property bool expanded: false
         signal toggleSubtasks
@@ -812,16 +881,16 @@ DesktopPluginComponent {
 
             DIcon {
                 Layout.alignment: Qt.AlignTop
-                name: checkMouse.containsMouse ? "check_circle" : "radio_button_unchecked"
+                name: row.task.done ? (checkMouse.containsMouse ? "radio_button_unchecked" : "check") : (checkMouse.containsMouse ? "check_circle" : "radio_button_unchecked")
                 size: Theme.iconSize - 2
-                color: checkMouse.containsMouse ? Theme.primary : Theme.surfaceTextSecondary
+                color: row.task.done || checkMouse.containsMouse ? Theme.primary : Theme.surfaceTextSecondary
                 MouseArea {
                     id: checkMouse
                     anchors.fill: parent
                     anchors.margins: -4
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.setTaskDone(row.task, true)
+                    onClicked: root.setTaskDone(row.task, !row.task.done)
                 }
             }
             ColumnLayout {
@@ -830,7 +899,8 @@ DesktopPluginComponent {
                 StyledText {
                     text: row.task.title
                     font.pixelSize: Theme.fontSizeMedium
-                    color: Theme.surfaceText
+                    font.strikeout: !!row.task.done
+                    color: row.task.done ? Theme.surfaceTextSecondary : Theme.surfaceText
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true
                 }
@@ -844,11 +914,11 @@ DesktopPluginComponent {
                     Layout.fillWidth: true
                 }
                 RowLayout {
-                    visible: !!row.task.due || row.subtaskCount > 0
+                    visible: (!!row.task.due && !row.task.done) || row.subtaskCount > 0 || row.listCaption !== ""
                     spacing: Theme.spacingXS
                 // due date chip
                 Rectangle {
-                    visible: !!row.task.due
+                    visible: !!row.task.due && !row.task.done
                     implicitHeight: dueRow.implicitHeight + 4
                     implicitWidth: dueRow.implicitWidth + Theme.spacingS * 2
                     radius: height / 2
@@ -894,6 +964,15 @@ DesktopPluginComponent {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: row.toggleSubtasks()
                     }
+                }
+                // which list, when several are shown
+                StyledText {
+                    visible: row.listCaption !== ""
+                    text: row.listCaption
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceTextSecondary
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 160
                 }
                 }
             }
@@ -1161,175 +1240,232 @@ DesktopPluginComponent {
             }
 
             // ===== Tasks =====
-            Flickable {
+            // Same layout as the calendar: header with sync and a "+ Task" button,
+            // list chips to show or hide lists, then the tasks of every shown list
+            // by day
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 1
-                clip: true
-                contentHeight: tasksCol.implicitHeight
-                boundsBehavior: Flickable.StopAtBounds
+                spacing: Theme.spacingS
 
-                ColumnLayout {
-                    id: tasksCol
-                    width: parent.width
-                    spacing: Theme.spacingL
-
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingS
+                    DIcon { name: "task_alt"; size: Theme.iconSize; color: Theme.primary }
+                    StyledText { text: I18n.trFor("dcalAgenda", "Tasks"); font.pixelSize: Theme.fontSizeLarge; font.weight: Font.Medium; color: Theme.surfaceText }
                     StyledText {
-                        visible: root.taskLists.length === 0
-                        text: root.errorText || I18n.trFor("dcalAgenda", "No task lists")
+                        visible: root.openGroups.length > 0
+                        text: root.openGroups.length
+                        font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceTextSecondary
-                        font.pixelSize: Theme.fontSizeMedium
                     }
+                    Item { Layout.fillWidth: true }
+                    SyncButton {}
+                    HeaderButton {
+                        icon: "add"
+                        label: I18n.trFor("dcalAgenda", "Task")
+                        enabled: root.taskLists.length > 0
+                        onClicked: root.openEditor("")
+                    }
+                }
+
+                // Task list filter: click to hide or show
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingXS
+                    visible: root.taskLists.length > 1
 
                     Repeater {
                         model: root.taskLists
-
-                        delegate: ColumnLayout {
-                            id: listBlock
+                        delegate: Rectangle {
                             required property var modelData
-                            required property int index
-                            readonly property var open: root.openTasks(modelData.id)
-                            readonly property var groups: root.openTaskGroups(modelData.id)
-                            readonly property var done: root.doneTasks(modelData.id)
-                            readonly property bool doneExpanded: !!root.expandedDone[modelData.id]
-                            Layout.fillWidth: true
-                            spacing: Theme.spacingS
+                            readonly property bool shown: root.hiddenTaskLists.indexOf(modelData.id) < 0
+                            height: listChipRow.implicitHeight + Theme.spacingXS * 2
+                            width: listChipRow.implicitWidth + Theme.spacingS * 2
+                            radius: height / 2
+                            color: shown ? Theme.withAlpha(modelData.color || Theme.primary, 0.18) : "transparent"
+                            border.width: 1
+                            border.color: Theme.withAlpha(modelData.color || Theme.primary, shown ? 0.5 : 0.25)
 
-                            // List name
                             RowLayout {
-                                Layout.fillWidth: true
-                                Layout.bottomMargin: Theme.spacingXS
-                                spacing: Theme.spacingS
-                                DIcon { name: "task_alt"; size: Theme.iconSize; color: Theme.primary }
+                                id: listChipRow
+                                anchors.centerIn: parent
+                                spacing: Theme.spacingXS
+                                Rectangle { width: 8; height: 8; radius: 4; color: modelData.color || Theme.primary; opacity: parent.parent.shown ? 1 : 0.4 }
                                 StyledText {
-                                    text: root.listName(listBlock.modelData)
-                                    font.pixelSize: Theme.fontSizeLarge
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                }
-                                StyledText {
-                                    visible: listBlock.open.length > 0
-                                    text: listBlock.open.length
+                                    text: root.listName(modelData)
                                     font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceTextSecondary
+                                    color: parent.parent.shown ? Theme.surfaceText : Theme.surfaceTextSecondary
+                                    font.strikeout: !parent.parent.shown
                                 }
-                                SyncButton { visible: listBlock.index === 0 }
                             }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.toggleTaskList(modelData.id)
+                            }
+                        }
+                    }
+                }
 
-                            // Add task: a button row that opens the editor, as in Google
-                            Rectangle {
-                                visible: root.addingToList !== listBlock.modelData.id
+                TaskEditor {
+                    visible: root.editorAt === "new"
+                    Layout.fillWidth: true
+                }
+
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    contentHeight: tasksCol.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    ColumnLayout {
+                        id: tasksCol
+                        width: parent.width
+                        spacing: Theme.spacingM
+
+                        StyledText {
+                            visible: root.taskLists.length === 0 || (root.taskDays.length === 0 && root.doneList.length === 0)
+                            text: root.errorText || (root.taskLists.length === 0 ? I18n.trFor("dcalAgenda", "No task lists") : I18n.trFor("dcalAgenda", "All tasks complete 🎉"))
+                            color: Theme.surfaceTextSecondary
+                            font.pixelSize: Theme.fontSizeMedium
+                        }
+
+                        Repeater {
+                            model: root.taskDays
+
+                            delegate: ColumnLayout {
+                                id: day
+                                required property var modelData
                                 Layout.fillWidth: true
-                                implicitHeight: addRow.implicitHeight + Theme.spacingS * 2
-                                radius: Theme.cornerRadius / 2
-                                color: addMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.10) : "transparent"
+                                spacing: Theme.spacingXS
 
-                                RowLayout {
-                                    id: addRow
-                                    anchors.fill: parent
-                                    anchors.margins: Theme.spacingS
-                                    spacing: Theme.spacingS
-                                    DIcon { name: "add_task"; size: Theme.iconSize - 2; color: Theme.primary }
-                                    StyledText {
-                                        text: I18n.trFor("dcalAgenda", "Add task")
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        font.weight: Font.Medium
-                                        color: Theme.primary
+                                StyledText {
+                                    text: day.modelData.label
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    color: day.modelData.kind === "overdue" ? Theme.error : Theme.primary
+                                }
+
+                                // One card per task with its subtasks, so a group reads as a
+                                // unit; the stripe shows its most urgent due date, and the card
+                                // outlines while the pointer is in it
+                                Repeater {
+                                    model: day.modelData.groups
+                                    delegate: Rectangle {
+                                        id: group
+                                        required property var modelData
+                                        readonly property string state_: root.groupState(modelData)
+                                        readonly property bool expanded: root.expandedTasks.indexOf(modelData.task.uid) >= 0
+                                        readonly property bool addingSubtask: root.editorAt !== "" && root.editorAt === modelData.task.uid
                                         Layout.fillWidth: true
-                                    }
-                                }
-                                MouseArea {
-                                    id: addMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.openEditor(listBlock.modelData.id)
-                                }
-                            }
+                                        implicitHeight: groupCol.implicitHeight + 4
+                                        radius: Theme.cornerRadius / 1.5
+                                        color: root.tileBg
+                                        border.width: 1
+                                        border.color: groupHover.hovered || addingSubtask ? Theme.withAlpha(Theme.primary, 0.4) : "transparent"
+                                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
-                            TaskEditor {
-                                visible: root.addingToList === listBlock.modelData.id
-                                Layout.fillWidth: true
-                            }
+                                        HoverHandler { id: groupHover }
 
-                            // Open tasks, overdue ones included: one card per task with its
-                            // subtasks, so a group reads as a unit; the stripe shows its most
-                            // urgent due date, and the card outlines while the pointer is in it
-                            Repeater {
-                                model: listBlock.groups
-                                delegate: Rectangle {
-                                    id: group
-                                    required property var modelData
-                                    readonly property string state_: root.groupState(modelData)
-                                    readonly property bool expanded: root.expandedTasks.indexOf(modelData.task.uid) >= 0
-                                    Layout.fillWidth: true
-                                    implicitHeight: groupCol.implicitHeight + 4
-                                    radius: Theme.cornerRadius / 1.5
-                                    color: root.tileBg
-                                    border.width: 1
-                                    border.color: groupHover.hovered ? Theme.withAlpha(Theme.primary, 0.4) : "transparent"
-                                    Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                                    HoverHandler { id: groupHover }
-
-                                    // urgency stripe
-                                    Rectangle {
-                                        visible: group.state_ !== ""
-                                        anchors.left: parent.left
-                                        anchors.top: parent.top
-                                        anchors.bottom: parent.bottom
-                                        anchors.margins: Theme.spacingXS
-                                        width: 3
-                                        radius: 1.5
-                                        color: group.state_ === "overdue" ? Theme.error : Theme.primary
-                                    }
-
-                                    ColumnLayout {
-                                        id: groupCol
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        anchors.margins: 2
-                                        anchors.leftMargin: Theme.spacingXS + 5
-                                        spacing: 0
-
-                                        TaskRow {
-                                            Layout.fillWidth: true
-                                            task: group.modelData.task
-                                            subtaskCount: group.modelData.children.length
-                                            subtasksDue: group.modelData.children.filter(c => root.dueState(c) === "overdue").length
-                                            expanded: group.expanded
-                                            onToggleSubtasks: root.toggleSubtasks(group.modelData.task.uid)
+                                        // urgency stripe
+                                        Rectangle {
+                                            visible: group.state_ !== ""
+                                            anchors.left: parent.left
+                                            anchors.top: parent.top
+                                            anchors.bottom: parent.bottom
+                                            anchors.margins: Theme.spacingXS
+                                            width: 3
+                                            radius: 1.5
+                                            color: group.state_ === "overdue" ? Theme.error : Theme.primary
                                         }
 
-                                        // Subtasks, indented under the parent with a guide line
-                                        Item {
-                                            visible: group.modelData.children.length > 0 && group.expanded
-                                            Layout.fillWidth: true
-                                            implicitHeight: subCol.implicitHeight
+                                        ColumnLayout {
+                                            id: groupCol
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.top: parent.top
+                                            anchors.margins: 2
+                                            anchors.leftMargin: Theme.spacingXS + 5
+                                            spacing: 0
 
-                                            Rectangle {
-                                                x: Theme.spacingS + (Theme.iconSize - 2) / 2
-                                                y: 0
-                                                width: 1
-                                                height: parent.height - Theme.spacingS
-                                                color: Theme.withAlpha(Theme.surfaceText, 0.18)
+                                            TaskRow {
+                                                Layout.fillWidth: true
+                                                task: group.modelData.task
+                                                subtaskCount: group.modelData.children.length
+                                                subtasksDue: group.modelData.children.filter(c => root.dueState(c) === "overdue").length
+                                                expanded: group.expanded
+                                                listCaption: root.visibleTaskLists.length > 1 ? root.listOf(group.modelData.task) : ""
+                                                onToggleSubtasks: root.toggleSubtasks(group.modelData.task.uid)
                                             }
 
-                                            ColumnLayout {
-                                                id: subCol
-                                                anchors.left: parent.left
-                                                anchors.right: parent.right
-                                                anchors.leftMargin: Theme.iconSize + Theme.spacingS
-                                                spacing: 0
-                                                Repeater {
-                                                    model: group.modelData.children
-                                                    delegate: TaskRow {
-                                                        required property var modelData
+                                            // Subtasks, indented under the parent with a guide line,
+                                            // completed ones included; then "+ Subtask"
+                                            Item {
+                                                visible: group.expanded && !!group.modelData.task.uid
+                                                Layout.fillWidth: true
+                                                implicitHeight: subCol.implicitHeight
+
+                                                Rectangle {
+                                                    x: Theme.spacingS + (Theme.iconSize - 2) / 2
+                                                    y: 0
+                                                    width: 1
+                                                    height: parent.height - Theme.spacingS
+                                                    color: Theme.withAlpha(Theme.surfaceText, 0.18)
+                                                }
+
+                                                ColumnLayout {
+                                                    id: subCol
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.leftMargin: Theme.iconSize + Theme.spacingS
+                                                    spacing: 0
+                                                    Repeater {
+                                                        model: group.modelData.children
+                                                        delegate: TaskRow {
+                                                            required property var modelData
+                                                            Layout.fillWidth: true
+                                                            task: modelData
+                                                        }
+                                                    }
+
+                                                    TaskEditor {
+                                                        visible: group.addingSubtask
                                                         Layout.fillWidth: true
-                                                        task: modelData
+                                                        Layout.topMargin: Theme.spacingXS
+                                                        Layout.bottomMargin: Theme.spacingS
+                                                    }
+
+                                                    // "+ Subtask"
+                                                    Rectangle {
+                                                        visible: !group.addingSubtask
+                                                        Layout.fillWidth: true
+                                                        implicitHeight: addSubRow.implicitHeight + Theme.spacingS * 2
+                                                        radius: Theme.cornerRadius / 2
+                                                        color: addSubMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.10) : "transparent"
+                                                        RowLayout {
+                                                            id: addSubRow
+                                                            anchors.fill: parent
+                                                            anchors.margins: Theme.spacingS
+                                                            spacing: Theme.spacingS
+                                                            DIcon { name: "add"; size: Theme.iconSize - 4; color: Theme.primary }
+                                                            StyledText {
+                                                                text: I18n.trFor("dcalAgenda", "Subtask")
+                                                                font.pixelSize: Theme.fontSizeSmall
+                                                                font.weight: Font.Medium
+                                                                color: Theme.primary
+                                                                Layout.fillWidth: true
+                                                            }
+                                                        }
+                                                        MouseArea {
+                                                            id: addSubMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: root.openSubtaskEditor(group.modelData.task)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1337,104 +1473,45 @@ DesktopPluginComponent {
                                     }
                                 }
                             }
+                        }
 
-                            StyledText {
-                                visible: listBlock.open.length === 0
-                                text: I18n.trFor("dcalAgenda", "All tasks complete 🎉")
-                                font.pixelSize: Theme.fontSizeMedium
-                                color: Theme.surfaceTextSecondary
-                                Layout.leftMargin: Theme.spacingS
-                            }
-
-                            // Completed tasks in a collapsed block
-                            Rectangle {
-                                visible: listBlock.done.length > 0
-                                Layout.fillWidth: true
-                                Layout.topMargin: Theme.spacingS
-                                implicitHeight: doneHeader.implicitHeight + Theme.spacingS * 2
-                                radius: Theme.cornerRadius / 2
-                                color: doneMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.08) : "transparent"
-
-                                RowLayout {
-                                    id: doneHeader
-                                    anchors.fill: parent
-                                    anchors.margins: Theme.spacingS
-                                    spacing: Theme.spacingS
-                                    DIcon {
-                                        name: listBlock.doneExpanded ? "expand_more" : "chevron_right"
-                                        size: Theme.iconSize - 2
-                                        color: Theme.surfaceTextSecondary
-                                    }
-                                    StyledText {
-                                        readonly property int n: listBlock.done.length
-                                        text: root.plural(n, I18n.trFor("dcalAgenda", "%1 task completed|%1 tasks completed"))
-                                        font.pixelSize: Theme.fontSizeMedium
-                                        font.weight: Font.Medium
-                                        color: Theme.surfaceTextSecondary
-                                        Layout.fillWidth: true
-                                    }
+                        // Completed tasks in a collapsed block
+                        Item {
+                            visible: root.doneList.length > 0
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spacingS
+                            implicitHeight: doneHeader.implicitHeight
+                            RowLayout {
+                                id: doneHeader
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                spacing: Theme.spacingS
+                                DIcon {
+                                    name: root.doneExpanded ? "expand_more" : "chevron_right"
+                                    size: Theme.iconSize - 2
+                                    color: Theme.surfaceTextSecondary
                                 }
-                                MouseArea {
-                                    id: doneMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        const e = Object.assign({}, root.expandedDone);
-                                        e[listBlock.modelData.id] = !listBlock.doneExpanded;
-                                        root.expandedDone = e;
-                                    }
-                                }
-                            }
-
-                            Repeater {
-                                model: listBlock.doneExpanded ? listBlock.done : []
-                                delegate: RowLayout {
-                                    required property var modelData
+                                StyledText {
+                                    text: root.plural(root.doneList.length, I18n.trFor("dcalAgenda", "%1 task completed|%1 tasks completed"))
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: Theme.surfaceTextSecondary
                                     Layout.fillWidth: true
-                                    Layout.leftMargin: Theme.spacingS + (modelData.depth > 0 ? Theme.iconSize + Theme.spacingS : 0)
-                                    spacing: Theme.spacingS
-
-                                    DIcon {
-                                        Layout.alignment: Qt.AlignTop
-                                        name: "check"
-                                        size: Theme.iconSize - 2
-                                        color: Theme.primary
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            anchors.margins: -4
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: root.setTaskDone(modelData, false)
-                                        }
-                                    }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 0
-                                        StyledText {
-                                            text: modelData.title
-                                            font.pixelSize: Theme.fontSizeMedium
-                                            font.strikeout: true
-                                            color: Theme.surfaceTextSecondary
-                                            wrapMode: Text.Wrap
-                                            Layout.fillWidth: true
-                                        }
-                                        StyledText {
-                                            // A subtask shown apart from its parent names it
-                                            visible: modelData.parentTitle !== ""
-                                            text: "↳ " + modelData.parentTitle
-                                            font.pixelSize: Theme.fontSizeSmall
-                                            color: Theme.surfaceTextSecondary
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
-                                        StyledText {
-                                            visible: !!modelData.completedAt
-                                            text: modelData.completedAt ? I18n.trFor("dcalAgenda", "Completed %1").arg(I18n.locale().toString(modelData.completedAt, I18n.trFor("dcalAgenda", "ddd, MMM d"))) : ""
-                                            font.pixelSize: Theme.fontSizeSmall
-                                            color: Theme.surfaceTextSecondary
-                                        }
-                                    }
                                 }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.doneExpanded = !root.doneExpanded
+                            }
+                        }
+
+                        Repeater {
+                            model: root.doneExpanded ? root.doneList : []
+                            delegate: TaskRow {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                task: modelData
+                                listCaption: modelData.completedAt ? I18n.trFor("dcalAgenda", "Completed %1").arg(I18n.locale().toString(modelData.completedAt, I18n.trFor("dcalAgenda", "ddd, MMM d"))) : ""
                             }
                         }
                     }

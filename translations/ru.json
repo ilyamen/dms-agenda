@@ -29,9 +29,6 @@
     "Add a title": {
         "Add a title": "Добавьте название"
     },
-    "Add task": {
-        "Add task": "Добавить задачу"
-    },
     "All tasks complete 🎉": {
         "All tasks complete 🎉": "Все задачи выполнены 🎉"
     },
@@ -107,11 +104,26 @@
     "Now · until %1": {
         "Now · until %1": "Сейчас · до %1"
     },
+    "Overdue": {
+        "Overdue": "Просрочено"
+    },
     "Refresh every": {
         "Refresh every": "Обновлять каждые"
     },
     "Save": {
         "Save": "Сохранить"
+    },
+    "Subtask": {
+        "Subtask": "Подзадача"
+    },
+    "Subtask of “%1”": {
+        "Subtask of “%1”": "Подзадача к «%1»"
+    },
+    "Task": {
+        "Task": "Задача"
+    },
+    "Tasks": {
+        "Tasks": "Задачи"
     },
     "The widget shows events and tasks from dcal. Install DankCalendar, add an account with “dcal account setup google”, then re-enable the plugin.": {
         "The widget shows events and tasks from dcal. Install DankCalendar, add an account with “dcal account setup google”, then re-enable the plugin.": "Виджет показывает события и задачи из dcal. Установите DankCalendar, подключите аккаунт командой «dcal account setup google» и снова включите плагин."
