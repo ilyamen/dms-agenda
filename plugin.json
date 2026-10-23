@@ -11,7 +11,7 @@
     "component": "./Agenda.qml",
     "settings": "./AgendaSettings.qml",
     "startupCheck": "./StartupCheck.qml",
-    "requires_dms": ">=1.6.0",
+    "requires_dms": ">=2.0.0",
     "dependencies": ["dcal"],
     "permissions": ["settings_read", "settings_write", "process"]
 }

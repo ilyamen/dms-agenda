@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 import qs.Common
+import qs.DCommon.Widgets
 import qs.Widgets
 import qs.Modules.Plugins
 
@@ -438,7 +439,7 @@ DesktopPluginComponent {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
-                DankIcon { name: "schedule"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: 4 }
+                DIcon { name: "schedule"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: 4 }
                 Flow {
                     Layout.fillWidth: true
                     spacing: Theme.spacingXS
@@ -494,7 +495,7 @@ DesktopPluginComponent {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
-                DankIcon { name: "notes"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: Theme.spacingS }
+                DIcon { name: "notes"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary; Layout.alignment: Qt.AlignTop; Layout.topMargin: Theme.spacingS }
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: Math.max(64, descInput.implicitHeight + Theme.spacingS * 2)
@@ -525,7 +526,7 @@ DesktopPluginComponent {
                 visible: root.taskLists.length > 1
                 Layout.fillWidth: true
                 spacing: Theme.spacingS
-                DankIcon { name: "list"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary }
+                DIcon { name: "list"; size: Theme.iconSize - 4; color: Theme.surfaceTextSecondary }
                 Flow {
                     Layout.fillWidth: true
                     spacing: Theme.spacingXS
@@ -666,7 +667,7 @@ DesktopPluginComponent {
             implicitHeight: implicitWidth
             radius: width / 2
             color: syncMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.18) : "transparent"
-            DankIcon {
+            DIcon {
                 id: syncIcon
                 anchors.centerIn: parent
                 name: root.syncState === "error" ? "sync_problem" : "sync"
@@ -738,11 +739,121 @@ DesktopPluginComponent {
         return withSubtasks(tasks.filter(t => t.calendarId === listId && !t.done), (a, b) => (a.due ? a.due.getTime() : 8.64e15) - (b.due ? b.due.getTime() : 8.64e15));
     }
 
+    // Open tasks as cards: each top-level task with its subtasks
+    function openTaskGroups(listId) {
+        const groups = [];
+        for (const t of openTasks(listId)) {
+            if (t.depth === 0 || groups.length === 0)
+                groups.push({ task: t, children: [] });
+            else
+                groups[groups.length - 1].children.push(t);
+        }
+        return groups;
+    }
+
+    // "overdue" | "today" | "": the due state of one task
+    function dueState(t) {
+        if (!t.due)
+            return "";
+        const days = (now, daysFromToday(t.due));
+        return days < 0 ? "overdue" : days === 0 ? "today" : "";
+    }
+
+    // The most urgent state in a group, for the stripe on its card
+    function groupState(g) {
+        const states = [g.task].concat(g.children).map(dueState);
+        return states.indexOf("overdue") >= 0 ? "overdue" : states.indexOf("today") >= 0 ? "today" : "";
+    }
+
     function doneTasks(listId) {
         return withSubtasks(tasks.filter(t => t.calendarId === listId && t.done), (a, b) => (b.completedAt ? b.completedAt.getTime() : 0) - (a.completedAt ? a.completedAt.getTime() : 0));
     }
 
     // ---------- shared components ----------
+
+    // One open task: check circle, title, parent hint, due chip. Its own tint
+    // shows its due state, and it lights up under the pointer.
+    component TaskRow: Rectangle {
+        id: row
+        required property var task
+        readonly property string due: root.dueState(task)
+        readonly property bool hovered: rowHover.hovered
+
+        implicitHeight: taskRow.implicitHeight + Theme.spacingS * 2
+        radius: Theme.cornerRadius / 2
+        // Due today: light theme tint; overdue: light red. Tasks have no time
+        // of day, so they never animate; color alone sets them apart.
+        color: hovered ? Theme.withAlpha(Theme.primary, 0.14)
+            : due === "today" ? Theme.withAlpha(Theme.primary, 0.11)
+            : due === "overdue" ? Theme.withAlpha(Theme.error, 0.09)
+            : "transparent"
+        Behavior on color { ColorAnimation { duration: 150 } }
+
+        HoverHandler { id: rowHover }
+
+        RowLayout {
+            id: taskRow
+            anchors.fill: parent
+            anchors.margins: Theme.spacingS
+            spacing: Theme.spacingS
+
+            DIcon {
+                Layout.alignment: Qt.AlignTop
+                name: checkMouse.containsMouse ? "check_circle" : "radio_button_unchecked"
+                size: Theme.iconSize - 2
+                color: checkMouse.containsMouse ? Theme.primary : Theme.surfaceTextSecondary
+                MouseArea {
+                    id: checkMouse
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.setTaskDone(row.task, true)
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingXS
+                StyledText {
+                    text: row.task.title
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.surfaceText
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                }
+                StyledText {
+                    // A subtask shown apart from its parent names it
+                    visible: row.task.parentTitle !== ""
+                    text: "↳ " + row.task.parentTitle
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceTextSecondary
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                // due date chip
+                Rectangle {
+                    visible: !!row.task.due
+                    implicitHeight: dueRow.implicitHeight + 4
+                    implicitWidth: dueRow.implicitWidth + Theme.spacingS * 2
+                    radius: height / 2
+                    color: "transparent"
+                    border.width: 1
+                    border.color: row.due === "overdue" ? Theme.withAlpha(Theme.error, 0.6) : row.due === "today" ? Theme.withAlpha(Theme.primary, 0.7) : Theme.withAlpha(Theme.surfaceText, 0.25)
+                    RowLayout {
+                        id: dueRow
+                        anchors.centerIn: parent
+                        spacing: 4
+                        DIcon { name: "schedule"; size: Theme.fontSizeSmall + 2; color: row.due === "overdue" ? Theme.error : row.due === "today" ? Theme.primary : Theme.surfaceTextSecondary }
+                        StyledText {
+                            text: row.task.due ? root.dueLabel(row.task.due) : ""
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: row.due === "overdue" ? Theme.error : row.due === "today" ? Theme.primary : Theme.surfaceTextSecondary
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     component HeaderButton: Rectangle {
         id: hb
@@ -758,7 +869,7 @@ DesktopPluginComponent {
             id: hbRow
             anchors.centerIn: parent
             spacing: Theme.spacingXS
-            DankIcon { name: hb.icon; size: Theme.iconSize - 4; color: Theme.primary }
+            DIcon { name: hb.icon; size: Theme.iconSize - 4; color: Theme.primary }
             StyledText { text: hb.label; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.Medium; color: Theme.primary }
         }
         MouseArea {
@@ -792,7 +903,7 @@ DesktopPluginComponent {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: Theme.spacingS
-                    DankIcon { name: "calendar_month"; size: Theme.iconSize; color: Theme.primary }
+                    DIcon { name: "calendar_month"; size: Theme.iconSize; color: Theme.primary }
                     StyledText { text: I18n.trFor("dcalAgenda", "Calendar"); font.pixelSize: Theme.fontSizeLarge; font.weight: Font.Medium; color: Theme.surfaceText }
                     Item { Layout.fillWidth: true }
                     SyncButton {}
@@ -1033,17 +1144,18 @@ DesktopPluginComponent {
                             required property var modelData
                             required property int index
                             readonly property var open: root.openTasks(modelData.id)
+                            readonly property var groups: root.openTaskGroups(modelData.id)
                             readonly property var done: root.doneTasks(modelData.id)
                             readonly property bool doneExpanded: !!root.expandedDone[modelData.id]
                             Layout.fillWidth: true
-                            spacing: Theme.spacingXS
+                            spacing: Theme.spacingS
 
                             // List name
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.bottomMargin: Theme.spacingXS
                                 spacing: Theme.spacingS
-                                DankIcon { name: "task_alt"; size: Theme.iconSize; color: Theme.primary }
+                                DIcon { name: "task_alt"; size: Theme.iconSize; color: Theme.primary }
                                 StyledText {
                                     text: root.listName(listBlock.modelData)
                                     font.pixelSize: Theme.fontSizeLarge
@@ -1074,7 +1186,7 @@ DesktopPluginComponent {
                                     anchors.fill: parent
                                     anchors.margins: Theme.spacingS
                                     spacing: Theme.spacingS
-                                    DankIcon { name: "add_task"; size: Theme.iconSize - 2; color: Theme.primary }
+                                    DIcon { name: "add_task"; size: Theme.iconSize - 2; color: Theme.primary }
                                     StyledText {
                                         text: I18n.trFor("dcalAgenda", "Add task")
                                         font.pixelSize: Theme.fontSizeMedium
@@ -1097,93 +1209,81 @@ DesktopPluginComponent {
                                 Layout.fillWidth: true
                             }
 
-                            // Open tasks, overdue ones included
+                            // Open tasks, overdue ones included: one card per task with its
+                            // subtasks, so a group reads as a unit; the stripe shows its most
+                            // urgent due date, and the card outlines while the pointer is in it
                             Repeater {
-                                model: listBlock.open
+                                model: listBlock.groups
                                 delegate: Rectangle {
+                                    id: group
                                     required property var modelData
-                                    readonly property int dueIn: modelData.due ? (root.now, root.daysFromToday(modelData.due)) : 1
-                                    readonly property bool overdue: !!modelData.due && dueIn < 0
-                                    readonly property bool dueToday: !!modelData.due && dueIn === 0
+                                    readonly property string state_: root.groupState(modelData)
                                     Layout.fillWidth: true
-                                    // Subtasks sit under their parent with an indent, as in Google Tasks
-                                    Layout.leftMargin: modelData.depth > 0 ? Theme.iconSize + Theme.spacingS : 0
-                                    implicitHeight: taskRow.implicitHeight + Theme.spacingS * 2
-                                    radius: Theme.cornerRadius / 2
-                                    // Due today: light theme tint; overdue: light red. Tasks have no time
-                                    // of day, so they never animate; color alone sets them apart.
-                                    color: taskMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.14)
-                                        : dueToday ? Theme.withAlpha(Theme.primary, 0.11)
-                                        : overdue ? Theme.withAlpha(Theme.error, 0.08)
-                                        : "transparent"
+                                    implicitHeight: groupCol.implicitHeight + 4
+                                    radius: Theme.cornerRadius / 1.5
+                                    color: root.tileBg
+                                    border.width: 1
+                                    border.color: groupHover.hovered ? Theme.withAlpha(Theme.primary, 0.4) : "transparent"
+                                    Behavior on border.color { ColorAnimation { duration: 150 } }
 
-                                    RowLayout {
-                                        id: taskRow
-                                        anchors.fill: parent
-                                        anchors.margins: Theme.spacingS
-                                        spacing: Theme.spacingS
+                                    HoverHandler { id: groupHover }
 
-                                        DankIcon {
-                                            Layout.alignment: Qt.AlignTop
-                                            name: checkMouse.containsMouse ? "check_circle" : "radio_button_unchecked"
-                                            size: Theme.iconSize - 2
-                                            color: checkMouse.containsMouse ? Theme.primary : Theme.surfaceTextSecondary
-                                            MouseArea {
-                                                id: checkMouse
-                                                anchors.fill: parent
-                                                anchors.margins: -4
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: root.setTaskDone(modelData, true)
-                                            }
-                                        }
-                                        ColumnLayout {
+                                    // urgency stripe
+                                    Rectangle {
+                                        visible: group.state_ !== ""
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.bottom: parent.bottom
+                                        anchors.margins: Theme.spacingXS
+                                        width: 3
+                                        radius: 1.5
+                                        color: group.state_ === "overdue" ? Theme.error : Theme.primary
+                                    }
+
+                                    ColumnLayout {
+                                        id: groupCol
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.margins: 2
+                                        anchors.leftMargin: Theme.spacingXS + 5
+                                        spacing: 0
+
+                                        TaskRow {
                                             Layout.fillWidth: true
-                                            spacing: Theme.spacingXS
-                                            StyledText {
-                                                text: modelData.title
-                                                font.pixelSize: Theme.fontSizeMedium
-                                                color: Theme.surfaceText
-                                                wrapMode: Text.Wrap
-                                                Layout.fillWidth: true
-                                            }
-                                            StyledText {
-                                                // A subtask shown apart from its parent names it
-                                                visible: modelData.parentTitle !== ""
-                                                text: "↳ " + modelData.parentTitle
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceTextSecondary
-                                                elide: Text.ElideRight
-                                                Layout.fillWidth: true
-                                            }
-                                            // due date chip
+                                            task: group.modelData.task
+                                        }
+
+                                        // Subtasks, indented under the parent with a guide line
+                                        Item {
+                                            visible: group.modelData.children.length > 0
+                                            Layout.fillWidth: true
+                                            implicitHeight: subCol.implicitHeight
+
                                             Rectangle {
-                                                visible: !!modelData.due
-                                                implicitHeight: dueRow.implicitHeight + 4
-                                                implicitWidth: dueRow.implicitWidth + Theme.spacingS * 2
-                                                radius: height / 2
-                                                color: "transparent"
-                                                border.width: 1
-                                                border.color: overdue ? Theme.withAlpha(Theme.error, 0.6) : dueToday ? Theme.withAlpha(Theme.primary, 0.7) : Theme.withAlpha(Theme.surfaceText, 0.25)
-                                                RowLayout {
-                                                    id: dueRow
-                                                    anchors.centerIn: parent
-                                                    spacing: 4
-                                                    DankIcon { name: "schedule"; size: Theme.fontSizeSmall + 2; color: overdue ? Theme.error : dueToday ? Theme.primary : Theme.surfaceTextSecondary }
-                                                    StyledText {
-                                                        text: modelData.due ? root.dueLabel(modelData.due) : ""
-                                                        font.pixelSize: Theme.fontSizeSmall
-                                                        color: overdue ? Theme.error : dueToday ? Theme.primary : Theme.surfaceTextSecondary
+                                                x: Theme.spacingS + (Theme.iconSize - 2) / 2
+                                                y: 0
+                                                width: 1
+                                                height: parent.height - Theme.spacingS
+                                                color: Theme.withAlpha(Theme.surfaceText, 0.18)
+                                            }
+
+                                            ColumnLayout {
+                                                id: subCol
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.leftMargin: Theme.iconSize + Theme.spacingS
+                                                spacing: 0
+                                                Repeater {
+                                                    model: group.modelData.children
+                                                    delegate: TaskRow {
+                                                        required property var modelData
+                                                        Layout.fillWidth: true
+                                                        task: modelData
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                    MouseArea {
-                                        id: taskMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        acceptedButtons: Qt.NoButton
                                     }
                                 }
                             }
@@ -1210,7 +1310,7 @@ DesktopPluginComponent {
                                     anchors.fill: parent
                                     anchors.margins: Theme.spacingS
                                     spacing: Theme.spacingS
-                                    DankIcon {
+                                    DIcon {
                                         name: listBlock.doneExpanded ? "expand_more" : "chevron_right"
                                         size: Theme.iconSize - 2
                                         color: Theme.surfaceTextSecondary
@@ -1245,7 +1345,7 @@ DesktopPluginComponent {
                                     Layout.leftMargin: Theme.spacingS + (modelData.depth > 0 ? Theme.iconSize + Theme.spacingS : 0)
                                     spacing: Theme.spacingS
 
-                                    DankIcon {
+                                    DIcon {
                                         Layout.alignment: Qt.AlignTop
                                         name: "check"
                                         size: Theme.iconSize - 2
