@@ -855,6 +855,9 @@ DesktopPluginComponent {
         required property var task
         property int subtaskCount: 0
         property string listCaption: ""
+        // Under a date heading the date chip would only repeat it
+        property bool showDue: true
+        property int subtasksDone: 0
         property int subtasksDue: 0
         property bool expanded: false
         signal toggleSubtasks
@@ -914,11 +917,11 @@ DesktopPluginComponent {
                     Layout.fillWidth: true
                 }
                 RowLayout {
-                    visible: (!!row.task.due && !row.task.done) || row.subtaskCount > 0 || row.listCaption !== ""
+                    visible: (!!row.task.due && !row.task.done && row.showDue) || row.subtaskCount > 0 || row.listCaption !== ""
                     spacing: Theme.spacingXS
                 // due date chip
                 Rectangle {
-                    visible: !!row.task.due && !row.task.done
+                    visible: !!row.task.due && !row.task.done && row.showDue
                     implicitHeight: dueRow.implicitHeight + 4
                     implicitWidth: dueRow.implicitWidth + Theme.spacingS * 2
                     radius: height / 2
@@ -952,7 +955,7 @@ DesktopPluginComponent {
                         spacing: 2
                         DIcon { name: row.expanded ? "expand_less" : "expand_more"; size: Theme.fontSizeSmall + 4; color: Theme.surfaceTextSecondary }
                         StyledText {
-                            text: root.plural(row.subtaskCount, I18n.trFor("dcalAgenda", "%1 subtask|%1 subtasks"))
+                            text: (row.subtasksDone > 0 ? row.subtasksDone + "/" : "") + root.plural(row.subtaskCount, I18n.trFor("dcalAgenda", "%1 subtask|%1 subtasks"))
                             font.pixelSize: Theme.fontSizeSmall
                             color: Theme.surfaceTextSecondary
                         }
@@ -1395,6 +1398,8 @@ DesktopPluginComponent {
                                                 Layout.fillWidth: true
                                                 task: group.modelData.task
                                                 subtaskCount: group.modelData.children.length
+                                                subtasksDone: group.modelData.children.length - group.modelData.openChildren
+                                                showDue: day.modelData.kind === "overdue" || day.modelData.key === "none"
                                                 subtasksDue: group.modelData.children.filter(c => root.dueState(c) === "overdue").length
                                                 expanded: group.expanded
                                                 listCaption: root.visibleTaskLists.length > 1 ? root.listOf(group.modelData.task) : ""
