@@ -8,6 +8,9 @@
     "%1 month ago|%1 months ago": {
         "%1 month ago|%1 months ago": "%1 месяц назад|%1 месяца назад|%1 месяцев назад"
     },
+    "%1 subtask|%1 subtasks": {
+        "%1 subtask|%1 subtasks": "%1 подзадача|%1 подзадачи|%1 подзадач"
+    },
     "%1 task completed|%1 tasks completed": {
         "%1 task completed|%1 tasks completed": "%1 задача выполнена|%1 задачи выполнено|%1 задач выполнено"
     },

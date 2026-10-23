@@ -23,6 +23,8 @@ DesktopPluginComponent {
     property var events: []
     property var tasks: []
     property var hiddenCalendars: pluginData.hiddenCalendars ?? []
+    // Tasks whose subtasks are shown; the rest stay collapsed, which is the default
+    property var expandedTasks: pluginData.expandedTasks ?? []
     property var expandedDone: ({})   // calendarId -> whether the completed block is expanded
     property string errorText: ""
 
@@ -576,6 +578,13 @@ DesktopPluginComponent {
         return /'s list$/.test(c.name) ? I18n.trFor("dcalAgenda", "My Tasks") : c.name;
     }
 
+    function toggleSubtasks(uid) {
+        const expanded = expandedTasks.indexOf(uid) >= 0 ? expandedTasks.filter(x => x !== uid) : expandedTasks.concat([uid]);
+        expandedTasks = expanded;
+        if (pluginService && pluginService.savePluginData)
+            pluginService.savePluginData(pluginId, "expandedTasks", expanded);
+    }
+
     function toggleCalendar(id) {
         const hidden = hiddenCalendars.indexOf(id) >= 0 ? hiddenCalendars.filter(x => x !== id) : hiddenCalendars.concat([id]);
         hiddenCalendars = hidden;
@@ -776,6 +785,10 @@ DesktopPluginComponent {
     component TaskRow: Rectangle {
         id: row
         required property var task
+        property int subtaskCount: 0
+        property int subtasksDue: 0
+        property bool expanded: false
+        signal toggleSubtasks
         readonly property string due: root.dueState(task)
         readonly property bool hovered: rowHover.hovered
 
@@ -830,6 +843,9 @@ DesktopPluginComponent {
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
+                RowLayout {
+                    visible: !!row.task.due || row.subtaskCount > 0
+                    spacing: Theme.spacingXS
                 // due date chip
                 Rectangle {
                     visible: !!row.task.due
@@ -850,6 +866,35 @@ DesktopPluginComponent {
                             color: row.due === "overdue" ? Theme.error : row.due === "today" ? Theme.primary : Theme.surfaceTextSecondary
                         }
                     }
+                }
+                // "▸ 3 subtasks": shows or hides them; marked when one of them is due
+                Rectangle {
+                    visible: row.subtaskCount > 0
+                    implicitHeight: subRow.implicitHeight + 4
+                    implicitWidth: subRow.implicitWidth + Theme.spacingS * 2
+                    radius: height / 2
+                    color: subMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.16) : row.expanded ? Theme.withAlpha(Theme.primary, 0.1) : "transparent"
+                    border.width: 1
+                    border.color: row.subtasksDue > 0 && !row.expanded ? Theme.withAlpha(Theme.error, 0.6) : Theme.withAlpha(Theme.surfaceText, 0.25)
+                    RowLayout {
+                        id: subRow
+                        anchors.centerIn: parent
+                        spacing: 2
+                        DIcon { name: row.expanded ? "expand_less" : "expand_more"; size: Theme.fontSizeSmall + 4; color: Theme.surfaceTextSecondary }
+                        StyledText {
+                            text: root.plural(row.subtaskCount, I18n.trFor("dcalAgenda", "%1 subtask|%1 subtasks"))
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceTextSecondary
+                        }
+                    }
+                    MouseArea {
+                        id: subMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: row.toggleSubtasks()
+                    }
+                }
                 }
             }
         }
@@ -1218,6 +1263,7 @@ DesktopPluginComponent {
                                     id: group
                                     required property var modelData
                                     readonly property string state_: root.groupState(modelData)
+                                    readonly property bool expanded: root.expandedTasks.indexOf(modelData.task.uid) >= 0
                                     Layout.fillWidth: true
                                     implicitHeight: groupCol.implicitHeight + 4
                                     radius: Theme.cornerRadius / 1.5
@@ -1252,11 +1298,15 @@ DesktopPluginComponent {
                                         TaskRow {
                                             Layout.fillWidth: true
                                             task: group.modelData.task
+                                            subtaskCount: group.modelData.children.length
+                                            subtasksDue: group.modelData.children.filter(c => root.dueState(c) === "overdue").length
+                                            expanded: group.expanded
+                                            onToggleSubtasks: root.toggleSubtasks(group.modelData.task.uid)
                                         }
 
                                         // Subtasks, indented under the parent with a guide line
                                         Item {
-                                            visible: group.modelData.children.length > 0
+                                            visible: group.modelData.children.length > 0 && group.expanded
                                             Layout.fillWidth: true
                                             implicitHeight: subCol.implicitHeight
 
